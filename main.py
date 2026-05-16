@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from routers import (
     avatar,
+    avatar_live,
     chat,
     live,
     live_elevenlabs,
@@ -35,6 +36,12 @@ app.add_middleware(
 
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(avatar.router, prefix="/api/avatar", tags=["avatar"])
+app.include_router(avatar_live.router, prefix="/api/avatar/live", tags=["avatar-live"])
+app.include_router(
+    avatar_live.openai_router,
+    prefix="/api/avatar/openai/v1",
+    tags=["avatar-openai"],
+)
 app.include_router(reindex.router, prefix="/api/reindex", tags=["reindex"])
 app.include_router(resources.router, prefix="/api/resources", tags=["resources"])
 app.include_router(n8n_convert.router, prefix="/api/n8n", tags=["n8n"])
@@ -49,6 +56,14 @@ app.include_router(
 if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+AVATAR_APP_DIR = Path(__file__).resolve().parent / "frontend/nila-avatar/dist"
+if AVATAR_APP_DIR.is_dir():
+    app.mount(
+        "/avatar-app",
+        StaticFiles(directory=str(AVATAR_APP_DIR), html=True),
+        name="avatar-app",
+    )
+
 
 @app.get("/test")
 def test_ui():
@@ -57,6 +72,15 @@ def test_ui():
     if page.is_file():
         return FileResponse(page)
     return {"error": "static/avatar-test.html not found"}
+
+
+@app.get("/avatar")
+def avatar_beyond_ui():
+    """Beyond Presence avatar stream test UI."""
+    page = STATIC_DIR / "avatar-beyond.html"
+    if page.is_file():
+        return FileResponse(page)
+    return {"error": "static/avatar-beyond.html not found"}
 
 
 @app.get("/chat")
