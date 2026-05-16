@@ -1,157 +1,224 @@
 # Nila Backend
 
-FastAPI backend for **Nila**, the GIC (Government Information Center) AI assistant for Sri Lanka. Powers multilingual chat (English, Sinhala, Tamil), RAG over government knowledge, structured resource extraction (forms, offices, laws), avatar voice/streaming via ElevenLabs + Beyond Presence, and n8n content ingestion pipelines.
+FastAPI backend for **Nila**, the GIC (Government Information Center) AI assistant for Sri Lanka. Powers multilingual chat (English, Sinhala, Tamil), **Supabase RAG** over government knowledge, structured resources (forms, offices, laws), and several **live voice** integrations.
 
-**Base URL (local):** `http://localhost:8000`  
-**Interactive API docs:** [http://localhost:8000/docs](http://localhost:8000/docs)  
-**OpenAPI JSON:** [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)
+| | |
+|---|---|
+| **Local API** | `http://localhost:8000` |
+| **OpenAPI** | [http://localhost:8000/docs](http://localhost:8000/docs) |
+| **Branch** | `cursor/fastapi-backend-scaffold` |
 
 ---
 
 ## Table of contents
 
-1. [Architecture overview](#architecture-overview)
-2. [Tech stack](#tech-stack)
-3. [Project structure](#project-structure)
-4. [Environment variables](#environment-variables)
-5. [Supabase setup](#supabase-setup)
+1. [What you can run today](#what-you-can-run-today)
+2. [Architecture](#architecture)
+3. [Built-in test UIs](#built-in-test-uis)
+4. [Project structure](#project-structure)
+5. [Environment variables](#environment-variables)
 6. [Run locally](#run-locally)
-7. [Content & seeding](#content--seeding)
-8. [API reference](#api-reference)
-9. [Frontend integration guide](#frontend-integration-guide)
-10. [Internal / n8n endpoints](#internal--n8n-endpoints)
-11. [Core library modules](#core-library-modules)
-12. [Language detection](#language-detection)
-13. [Chat pipeline (detailed)](#chat-pipeline-detailed)
-14. [Resource extraction](#resource-extraction)
-15. [CORS & errors](#cors--errors)
-16. [Troubleshooting](#troubleshooting)
+7. [Supabase setup](#supabase-setup)
+8. [Avatar live (Beyond Presence + Supabase RAG)](#avatar-live-beyond-presence--supabase-rag)
+9. [Live ElevenLabs (voice-only, full local RAG)](#live-elevenlabs-voice-only-full-local-rag)
+10. [API reference (summary)](#api-reference-summary)
+11. [Frontend integration](#frontend-integration)
+12. [Content & seeding](#content--seeding)
+13. [Chat pipeline](#chat-pipeline)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
-## Architecture overview
+## What you can run today
+
+| Feature | Best for | Needs public URL? |
+|---------|----------|-------------------|
+| **`POST /api/chat`** | Text chat + resource panel | No |
+| **`GET /live-eleven`** | English live voice, Supabase in speech | No |
+| **`GET /avatar`** | Video avatar + live talk + resources | **Yes** for spoken Supabase answers* |
+| **`POST /api/avatar/ask`** | One-shot RAG answer + TTS (no live duplex) | No |
+
+\*Without a public URL, the avatar still talks (Bey’s LLM) and the **resources panel** can update from speech transcripts or typed questions. For **spoken** answers grounded in Supabase (like live-eleven), set `NILA_PUBLIC_BASE_URL` (ngrok or Cloudflare tunnel).
+
+---
+
+## Architecture
 
 ```
-┌──────────────┐     POST /api/chat      ┌─────────────────────────────────────┐
-│   Frontend   │ ───────────────────────►│  FastAPI (main.py)                  │
-│   (React)    │                         │  ├─ language_detector               │
-└──────┬───────┘                         │  ├─ RAG: search_knowledge (Supabase)│
-       │                                 │  ├─ LLM: OpenAI (en/ta) or Gemini(si)│
-       │  reply, resources, session_id   │  └─ resource_extractor              │
-       ◄─────────────────────────────────┤                                     │
-       │                                 └─────────────────────────────────────┘
-       │ POST /api/avatar
+┌─────────────┐  POST /api/chat          ┌──────────────────────────────────────┐
+│  Frontend   │ ───────────────────────►│ FastAPI                               │
+│             │◄──────────────────────────│  run_chat → Supabase vector search    │
+└──────┬──────┘   reply, resources       │  OpenAI (en/ta) / Gemini (si)         │
+       │                                  └──────────────────────────────────────┘
+       │
+       │  Avatar live (recommended prod path)
+       │  ┌─ WebSocket /api/avatar/live/ws  → status, resources, transcript
+       │  └─ LiveKit (livekit_url + token)  → mic + avatar video/audio
        ▼
-┌──────────────┐   ElevenLabs TTS    ┌──────────────────┐   WebRTC URL
-│ Avatar player│ ◄────────────────── │ Beyond Presence  │ ◄──────────────
-└──────────────┘                     └──────────────────┘
+┌─────────────┐  STT / TTS / video         ┌──────────────────────────────────────┐
+│   Browser   │ ◄──────────────────────────►│ Beyond Presence (api.bey.dev)       │
+└─────────────┘                            │  Calls POST {PUBLIC_URL}/api/avatar/ │
+                                           │  openai/v1/chat/completions → RAG    │
+                                           └──────────────────────────────────────┘
 
-┌──────────────┐     POST /api/n8n/convert     ┌──────────────┐
-│     n8n      │ ─────────────────────────────►│ OpenAI +     │
-│  (scraping)  │                               │ Gemini + RAG │
-└──────────────┘     POST /api/reindex          └──────────────┘
+┌─────────────┐  WebSocket /api/live/eleven/ws
+│   Browser   │ ◄──────────────────────────► ElevenLabs ConvAI (bridged by backend)
+└─────────────┘                            → Supabase RAG via contextual_update
 ```
 
 | Layer | Technology |
 |-------|------------|
-| API framework | FastAPI + Uvicorn |
-| Vector DB | Supabase (PostgreSQL + pgvector) |
-| Embeddings | OpenAI `text-embedding-3-small` (1536 dims) |
-| Chat (EN/TA) | OpenAI `gpt-4o` |
-| Chat (SI) | Google Gemini `gemini-1.5-pro` |
-| TTS | ElevenLabs `eleven_multilingual_v2` |
-| Avatar stream | Beyond Presence WebRTC API |
-| Language detect | Unicode blocks + `langdetect` |
+| API | FastAPI + Uvicorn |
+| Vector DB | Supabase (pgvector) |
+| Embeddings | OpenAI `text-embedding-3-small` |
+| Chat EN/TA | OpenAI GPT-4o |
+| Chat SI | Google Gemini |
+| Live voice (EN) | ElevenLabs Conversational AI |
+| Live avatar | Beyond Presence + LiveKit |
+| Avatar RAG (voice) | OpenAI-compatible endpoint on this API |
 
 ---
 
-## Tech stack
+## Built-in test UIs
 
-Dependencies (`requirements.txt`):
-
-| Package | Purpose |
-|---------|---------|
-| `fastapi` | HTTP API |
-| `uvicorn` | ASGI server |
-| `python-dotenv` | Load `.env` |
-| `openai` | Embeddings + GPT-4o chat |
-| `google-generativeai` | Sinhala chat + Sinhala Markdown translation |
-| `supabase` | Vector store client |
-| `httpx` | Async HTTP (ElevenLabs, Beyond Presence) |
-| `langdetect` | Language fallback detection |
-| `pydantic` | Request/response models |
-| `python-multipart` | Form uploads (future) |
-| `sse-starlette` | SSE streaming (future) |
+| URL | Description |
+|-----|-------------|
+| `/` | Health JSON |
+| `/docs` | Swagger UI |
+| `/chat` | Multi-turn chat UI |
+| `/live-eleven` | **English live voice** — full Supabase RAG, no avatar |
+| `/avatar` | **Avatar live** — WebSocket + LiveKit + resources |
+| `/live-en` | OpenAI Realtime speech (experimental) |
+| `/live` | Gemini Live speech |
+| `/voice` | Turn-based voice agent |
+| `/test` | Avatar/voice smoke tests |
 
 ---
 
 ## Project structure
 
 ```
-nila-backend/
-├── main.py                 # FastAPI app, CORS, router mounts, GET /
-├── seed_content.py         # CLI: seed Supabase from content/**/*.md
+Nila-backend/
+├── main.py                      # App, routers, static UI routes
+├── seed_content.py              # Seed Supabase from content/**/*.md
 ├── requirements.txt
 ├── .env.example
-├── README.md
 │
 ├── routers/
-│   ├── chat.py             # POST /api/chat — main chat + RAG
-│   ├── avatar.py           # POST /api/avatar — TTS + BP stream URL
-│   ├── status.py           # GET /api/status — dashboard badges
-│   ├── reindex.py          # POST /api/reindex — webhook reindex
-│   ├── n8n_convert.py      # POST /api/n8n/convert — HTML → Markdown
-│   └── resources.py        # Stub (not implemented)
+│   ├── chat.py                  # POST /api/chat
+│   ├── avatar.py                # Avatar setup, ask, LiveKit session, TTS
+│   ├── avatar_live.py           # Live avatar WS + OpenAI RAG for Bey
+│   ├── live_elevenlabs.py       # /api/live/eleven/* — ConvAI bridge
+│   ├── live_openai.py           # /api/live/en/ws
+│   ├── live.py                  # Gemini live WS
+│   ├── voice.py                 # Turn-based voice
+│   ├── status.py                # Dashboard stats
+│   ├── reindex.py               # Webhook reindex
+│   └── n8n_convert.py           # HTML → Markdown pipeline
 │
 ├── lib/
-│   ├── rag.py              # Embeddings, search, upsert, reload, count
-│   ├── openai_client.py    # GPT-4o responses (EN/TA)
-│   ├── gemini_client.py    # Gemini Sinhala responses
-│   ├── language_detector.py# Unicode + langdetect
-│   └── resource_extractor.py # Parse RESOURCES / RESOURCE: / සම්පත්:
+│   ├── rag.py                   # Embeddings + Supabase search
+│   ├── chat_service.py          # run_chat() — shared RAG + LLM
+│   ├── bey_presence.py          # api.bey.dev agents, calls, external LLM
+│   ├── bey_call_poller.py       # Poll call transcripts → RAG (local mode)
+│   ├── avatar_live_sessions.py  # Push resources to live WS clients
+│   ├── openai_chat_stream.py    # SSE for Bey external LLM
+│   ├── elevenlabs_convai.py     # ElevenLabs live helpers
+│   └── ...
 │
-└── content/
-    ├── en/                 # English Markdown knowledge files
-    ├── si/                 # Sinhala Markdown
-    ├── ta/                 # Tamil Markdown
-    └── synced/             # n8n sync metadata (optional)
-        ├── n8n_sites.json  # {"n8n_sites": 312}
-        └── synced_at.txt   # ISO timestamp of last sync
+├── static/
+│   ├── live-eleven.html         # Reference live voice UI
+│   ├── avatar-beyond.html       # Reference avatar live UI
+│   └── js/livekit-bey.js        # LiveKit + mic helpers
+│
+├── scripts/
+│   ├── start-public-tunnel.sh   # cloudflared or ngrok → :8000
+│   └── complete-voice-rag-setup.sh
+│
+├── frontend/nila-avatar/        # React reference (App.jsx)
+├── docs/FRONTEND_LIVE_ELEVEN.md # Frontend guide for live-eleven
+└── content/                     # Markdown knowledge (en/si/ta)
 ```
 
 ---
 
 ## Environment variables
 
-Copy `.env.example` to `.env` and fill in all required keys:
+Copy `.env.example` to `.env`. **Never commit `.env`.**
+
+### Core (chat + RAG)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPENAI_API_KEY` | Yes | Embeddings + EN/TA chat |
+| `GEMINI_API_KEY` | For Sinhala | Sinhala chat + n8n translate |
+| `SUPABASE_URL` | Yes | Supabase project URL |
+| `SUPABASE_SERVICE_KEY` | Yes | Service role key (server only) |
+
+### ElevenLabs (TTS + live-eleven)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ELEVENLABS_API_KEY` | For voice | TTS + ConvAI live |
+| `ELEVENLABS_AGENT_ID` | Optional | Reuse existing ConvAI agent |
+| `VOICE_ID_EN` / `SI` / `TA` | For TTS | ElevenLabs voice IDs |
+
+### Beyond Presence (avatar live)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `BEYOND_PRESENCE_API_KEY` | For avatar | From [app.bey.chat/settings](https://app.bey.chat/settings) |
+| `BEY_AGENT_ID` | Recommended | Agent UUID from setup or dashboard |
+| `BEYOND_PRESENCE_API_BASE` | Default OK | `https://api.bey.dev` |
+| `BEY_AVATAR_ID` | Optional | Public avatar id for new agents |
+| `BEY_AGENT_NAME` | Optional | Default `Nila` |
+| `BP_PERSONA_ID` | Legacy alias | Same as `BEY_AGENT_ID` (old name) |
+
+### Spoken Supabase RAG on avatar (Bey → your API)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `NILA_PUBLIC_BASE_URL` | For voice RAG | Public `https` URL to this API (ngrok / Cloudflare tunnel) |
+| `BEY_LLM_API_SECRET` | For voice RAG | Bearer token Bey sends; default `nila-bey-llm` |
+| `BEY_EXTERNAL_LLM_API_ID` | Optional | Reuse existing Bey external API registration |
+| `BEY_EXTERNAL_LLM_MODEL` | Optional | Default `nila-rag` |
+
+### Ops
+
+| Variable | Description |
+|----------|-------------|
+| `N8N_WEBHOOK_SECRET` | `x-webhook-secret` for `/api/reindex` |
+
+---
+
+## Run locally
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 cp .env.example .env
+# Edit .env — at minimum OPENAI, SUPABASE, BEYOND_PRESENCE for avatar
+
+# Supabase: run SQL below, then:
+python seed_content.py
+
+uvicorn main:app --reload --port 8000
 ```
 
-| Variable | Required by | Description |
-|----------|-------------|-------------|
-| `OPENAI_API_KEY` | RAG, chat (en/ta), n8n convert | OpenAI API key for embeddings and GPT-4o |
-| `GEMINI_API_KEY` | Chat (si), n8n Sinhala translate | Google AI Studio / Gemini API key |
-| `SUPABASE_URL` | RAG, status, seed | Supabase project URL |
-| `SUPABASE_SERVICE_KEY` | RAG, status, seed | Service role key (server-side only) |
-| `ELEVENLABS_API_KEY` | Avatar | ElevenLabs TTS |
-| `BEYOND_PRESENCE_API_KEY` | Avatar | Beyond Presence Bearer token |
-| `BP_PERSONA_ID` | Avatar | Beyond Presence persona ID |
-| `VOICE_ID_EN` | Avatar | ElevenLabs voice ID for English |
-| `VOICE_ID_SI` | Avatar | ElevenLabs voice ID for Sinhala |
-| `VOICE_ID_TA` | Avatar | ElevenLabs voice ID for Tamil |
-| `N8N_WEBHOOK_SECRET` | Reindex | Shared secret for `x-webhook-secret` header |
-| `ADMIN_USER` | (reserved) | Default `admin` — future admin routes |
-| `ADMIN_PASS` | (reserved) | Default `nila2025` — future admin routes |
+Verify:
 
-**Security:** Never expose `SUPABASE_SERVICE_KEY`, `OPENAI_API_KEY`, or webhook secrets to the browser. Frontend calls only this backend; keys stay server-side.
+```bash
+curl http://localhost:8000/
+curl http://localhost:8000/api/avatar/live/status
+curl "http://localhost:8000/api/avatar/live/rag-test?query=birth+registration+Sri+Lanka"
+```
 
 ---
 
 ## Supabase setup
 
-Run in the **Supabase SQL editor** before seeding or chatting:
+Run in the Supabase SQL editor:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -183,11 +250,7 @@ LANGUAGE plpgsql AS $$
 BEGIN
   RETURN QUERY
   SELECT
-    d.id,
-    d.content,
-    d.metadata,
-    d.source_url,
-    d.dept,
+    d.id, d.content, d.metadata, d.source_url, d.dept,
     1 - (d.embedding <=> query_embedding) AS similarity
   FROM documents d
   WHERE (filter_language IS NULL OR d.language = filter_language)
@@ -197,672 +260,281 @@ END;
 $$;
 ```
 
-### Documents table
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | uuid | Primary key |
-| `content` | text | Full Markdown document (embedded) |
-| `metadata` | jsonb | Title, path, frontmatter fields, etc. |
-| `embedding` | vector(1536) | OpenAI `text-embedding-3-small` |
-| `language` | text | `en`, `si`, or `ta` |
-| `source_url` | text | Canonical government URL |
-| `dept` | text | Department / service key (upsert uniqueness with `language`) |
-
-**Upsert rule:** One row per `(dept, language)` pair — re-seeding or n8n convert updates existing rows instead of duplicating.
-
----
-
-## Run locally
-
-### 1. Virtual environment (recommended)
-
-```bash
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### 2. Configure environment
-
-```bash
-cp .env.example .env
-# Edit .env with your API keys and Supabase credentials
-```
-
-### 3. Set up Supabase
-
-Run the [SQL above](#supabase-setup) in your Supabase project.
-
-### 4. Seed the vector store
+Seed:
 
 ```bash
 python seed_content.py
 ```
 
-Expected output:
+---
 
-```
-Seeded: birth-certificate.md (en)
-Done. Seeded 1 file(s).
-```
+## Avatar live (Beyond Presence + Supabase RAG)
 
-### 5. Start the API
+Real-time **speech-to-speech** with a **video avatar**. Uses the same `run_chat()` Supabase pipeline as chat and live-eleven when voice RAG is enabled.
+
+### Modes
+
+| Mode | `NILA_PUBLIC_BASE_URL` | Avatar speech | Resources panel |
+|------|------------------------|---------------|-----------------|
+| **Local** | Not set | Bey built-in LLM | Transcript polling + typed `text` on WS |
+| **Voice RAG** | Set (tunnel) | **Supabase-grounded** | Updates on each spoken turn |
+
+### Backend setup (voice RAG)
+
+**Terminal 1 — API**
 
 ```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn main:app --reload --port 8000
 ```
 
-### 6. Verify
+**Terminal 2 — public tunnel** (pick one)
 
 ```bash
-curl http://localhost:8000/
-# {"status":"Nila backend online","version":"1.0"}
+# Cloudflare (no account)
+./scripts/start-public-tunnel.sh
+
+# ngrok (needs authtoken once)
+./scripts/start-public-tunnel.sh ngrok
 ```
+
+Copy the **https** URL into `.env`:
+
+```env
+NILA_PUBLIC_BASE_URL=https://xxxx.trycloudflare.com
+BEY_LLM_API_SECRET=nila-bey-llm
+```
+
+Restart uvicorn, then:
+
+```bash
+./scripts/complete-voice-rag-setup.sh https://xxxx.trycloudflare.com
+```
+
+Confirm:
+
+```bash
+curl http://localhost:8000/api/avatar/live/status
+# "voice_uses_supabase_rag": true
+# "ready": true
+```
+
+Test RAG through the tunnel:
+
+```bash
+curl -X POST "$NILA_PUBLIC_BASE_URL/api/avatar/openai/v1/chat/completions" \
+  -H "Authorization: Bearer nila-bey-llm" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"nila-rag","stream":false,"messages":[{"role":"user","content":"How do I register a birth in Sri Lanka?"}]}'
+```
+
+### Avatar live API
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/avatar/live/status` | Readiness + `voice_uses_supabase_rag` |
+| `GET` | `/api/avatar/live/rag-test` | Supabase smoke test (no WS) |
+| `POST` | `/api/avatar/setup` | Create/fix Bey agent + external LLM |
+| `POST` | `/api/avatar/live/session` | LiveKit creds (REST alternative) |
+| `WS` | `/api/avatar/live/ws` | Session + resources + `ready` with LiveKit |
+| `POST` | `/api/avatar/openai/v1/chat/completions` | **Called by Bey only** — RAG voice |
+
+**Setup body** (optional public URL without editing `.env` first):
+
+```json
+POST /api/avatar/setup
+{ "public_base_url": "https://xxxx.trycloudflare.com" }
+```
+
+### WebSocket protocol (`/api/avatar/live/ws`)
+
+**Server → client**
+
+| `type` | Use |
+|--------|-----|
+| `ready` | `livekit_url`, `livekit_token`, `voice_uses_supabase_rag`, `local_mode` |
+| `status` | Status line |
+| `resources` | Resource panel (`form` / `office` / `law`) |
+| `rag_search` / `rag_applied` | Supabase query completed |
+| `text` | `role`: `user` \| `model`, transcript |
+| `error` | Error message |
+
+**Client → server**
+
+```json
+{ "type": "ping" }
+{ "type": "text", "text": "How do I register a birth in Sri Lanka?" }
+```
+
+Do **not** send microphone audio on this socket — use LiveKit.
+
+### LiveKit (browser)
+
+After `ready`:
+
+```ts
+import { Room, RoomEvent } from "livekit-client";
+
+const room = new Room({
+  audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true },
+});
+await room.connect(ready.livekit_url, ready.livekit_token);
+await room.localParticipant.setMicrophoneEnabled(true);
+await room.startAudio();
+room.on(RoomEvent.TrackSubscribed, (track) => {
+  if (track.kind === "video" || track.kind === "audio") track.attach(videoEl);
+});
+```
+
+Connect only after a **user click** (mic permission). See `static/js/livekit-bey.js` and `static/avatar-beyond.html`.
+
+### Other avatar endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/avatar/ask` | RAG + ElevenLabs TTS + optional LiveKit |
+| `POST` | `/api/avatar/livekit-session` | LiveKit only |
+| `GET` | `/api/avatar/agents` | List Bey agents |
+| `GET` | `/api/avatar/embed` | iframe URL `https://bey.chat/{id}` |
+
+---
+
+## Live ElevenLabs (voice-only, full local RAG)
+
+No Beyond Presence. Full duplex English voice with Supabase answers — works on **localhost only**.
+
+| | |
+|---|---|
+| **UI** | `http://localhost:8000/live-eleven` |
+| **WebSocket** | `ws://localhost:8000/api/live/eleven/ws` |
+| **Status** | `GET /api/live/eleven/status` |
+| **Frontend guide** | [docs/FRONTEND_LIVE_ELEVEN.md](docs/FRONTEND_LIVE_ELEVEN.md) |
+
+---
+
+## API reference (summary)
+
+| Method | Path | Frontend? |
+|--------|------|-----------|
+| `GET` | `/` | Health |
+| `POST` | `/api/chat` | **Yes** — main text chat |
+| `GET` | `/api/status` | Dashboard badges |
+| `GET` | `/api/avatar/live/status` | Avatar live readiness |
+| `WS` | `/api/avatar/live/ws` | **Yes** — avatar live |
+| `POST` | `/api/avatar/setup` | Ops / first run |
+| `POST` | `/api/avatar/ask` | One-shot RAG + voice |
+| `WS` | `/api/live/eleven/ws` | Live English voice |
+| `POST` | `/api/reindex` | n8n only (webhook secret) |
+| `POST` | `/api/n8n/convert` | n8n pipeline |
+
+Full request/response shapes: **Swagger** at `/docs` or sections below for chat.
+
+### `POST /api/chat`
+
+```json
+// Request
+{ "message": "...", "language": "auto", "history": [], "session_id": null }
+
+// Response
+{
+  "reply": "...",
+  "engine": "openai",
+  "language": "en",
+  "resources": [{ "type": "form", "name": "...", "url": "...", "label": "Download Form" }],
+  "session_id": "uuid"
+}
+```
+
+### Resource object
+
+| Field | Values |
+|-------|--------|
+| `type` | `form`, `office`, `law` |
+| `name` | Display name |
+| `url` | Link (optional) |
+| `label` | `Download Form`, `Visit Office`, `View Law` |
+
+---
+
+## Frontend integration
+
+### Text chat app
+
+1. `POST /api/chat` each turn with `history` + `session_id`
+2. Render `reply` and `resources[]`
+3. Optional: `GET /api/status` for badges
+
+### Avatar live app (separate frontend)
+
+1. `GET /api/avatar/live/status` → enable Connect if `ready`
+2. User clicks **Connect** → `WebSocket` `/api/avatar/live/ws`
+3. On `ready` → LiveKit + `setMicrophoneEnabled(true)`
+4. On `resources` → update side panel
+5. Do **not** call `/api/avatar/openai/...` from the browser
+
+**Dev proxy (Vite):**
+
+```ts
+// vite.config.ts
+server: { proxy: { "/api": "http://localhost:8000" } }
+```
+
+```env
+VITE_NILA_API_URL=http://localhost:8000
+```
+
+### Avatar live app (Beyond Presence + resource box)
+
+See **[docs/FRONTEND_AVATAR_LIVE.md](docs/FRONTEND_AVATAR_LIVE.md)** — full WebSocket protocol, resource box contract, LiveKit, and TypeScript types.
+
+### Live ElevenLabs app
+
+See [docs/FRONTEND_LIVE_ELEVEN.md](docs/FRONTEND_LIVE_ELEVEN.md).
 
 ---
 
 ## Content & seeding
 
-### Content directories
-
-| Path | Purpose |
-|------|---------|
-| `content/en/` | English government service Markdown |
-| `content/si/` | Sinhala Markdown |
-| `content/ta/` | Tamil Markdown |
-| `content/synced/` | Ops metadata (`n8n_sites.json`, `synced_at.txt`) |
-
-### Markdown frontmatter (recommended)
-
-```yaml
----
-service_id: birth-cert-en
-dept: RegistrarGeneral
-source_url: https://www.registrar-general.gov.lk
-language: en
----
-```
-
-### Sample file
-
-`content/en/birth-certificate.md` — birth certificate application (documents, fees, DS offices, forms, RESOURCES block).
-
-### `seed_content.py`
-
-Reads all `content/**/*.md` recursively and upserts into Supabase:
-
-| Field | Source |
-|-------|--------|
-| `language` | Folder: `en/`, `si/`, or `ta/` (default `en`) |
-| `dept` | Filename stem (e.g. `birth-certificate`) |
-| `source_url` | Frontmatter `source_url`, else relative path |
-| `content` | Full file text (including frontmatter) |
-| `metadata` | Frontmatter fields + `filename`, `path` |
+| Path | Language |
+|------|----------|
+| `content/en/` | English |
+| `content/si/` | Sinhala |
+| `content/ta/` | Tamil |
 
 ```bash
 python seed_content.py
-# Prints: Seeded: birth-certificate.md (en)
+# or POST /api/reindex with x-webhook-secret
 ```
 
-### `POST /api/reindex` (alternative to seed script)
-
-Re-indexes all `content/**/*.md` via `reload_vector_store()` — same vector upsert logic as seed, triggered by n8n with webhook secret.
+Markdown can include a `RESOURCES:` block; the backend also extracts forms/offices from retrieved chunks.
 
 ---
 
-## API reference
-
-All paths are relative to the server root. CORS is enabled for all origins (buildathon mode).
-
-### Summary table
-
-| Method | Path | Auth | Used by | Status |
-|--------|------|------|---------|--------|
-| `GET` | `/` | None | Health checks | ✅ |
-| `POST` | `/api/chat` | None | **Frontend** | ✅ |
-| `POST` | `/api/avatar` | None | **Frontend** | ✅ |
-| `GET` | `/api/status` | None | **Frontend** | ✅ |
-| `POST` | `/api/reindex` | `x-webhook-secret` | n8n / ops | ✅ |
-| `POST` | `/api/n8n/convert` | None | n8n | ✅ |
-| `GET` | `/api/resources/` | None | — | ⚠️ Stub only |
-| `OPTIONS` | `/api/chat`, `/api/avatar` | None | CORS preflight | ✅ |
-
----
-
-### `GET /` — Health check
-
-**Purpose:** Confirm API is running.
-
-**Response `200`:**
-
-```json
-{
-  "status": "Nila backend online",
-  "version": "1.0"
-}
-```
-
----
-
-### `POST /api/chat` — Main chat endpoint
-
-**Purpose:** User message → RAG retrieval → LLM answer → structured resources for Resource Box panel.
-
-**Headers:**
+## Chat pipeline
 
 ```
-Content-Type: application/json
+message → detect language → search_knowledge (Supabase, k=5)
+        → build context → OpenAI or Gemini
+        → extract_resources → reply + resources[] + session_id
 ```
 
-**Request body:**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `message` | string | *required* | User's current message |
-| `language` | string | `"auto"` | `"auto"`, `"en"`, `"si"`, or `"ta"` |
-| `history` | array | `[]` | Prior turns: `{"role": "user"\|"assistant", "content": "..."}` |
-| `session_id` | string \| null | `null` | Pass previous `session_id` to continue session |
-
-**Example request:**
-
-```json
-{
-  "message": "How do I apply for a birth certificate?",
-  "language": "auto",
-  "history": [
-    { "role": "user", "content": "Hello" },
-    { "role": "assistant", "content": "Welcome to Nila..." }
-  ],
-  "session_id": "550e8400-e29b-41d4-a716-446655440000"
-}
-```
-
-**Success response `200`:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `reply` | string | Cleaned answer text (no raw `RESOURCES:` block) |
-| `engine` | `"openai"` \| `"gemini"` | Which LLM was used |
-| `language` | `"en"` \| `"si"` \| `"ta"` | Resolved language |
-| `resources` | array | Structured forms/offices/laws for side panel |
-| `session_id` | string | UUID — store and resend on next request |
-
-**Example success:**
-
-```json
-{
-  "reply": "To apply for a birth certificate...\n\nYou can find the relevant forms and office details in the panel on the right.",
-  "engine": "openai",
-  "language": "en",
-  "resources": [
-    {
-      "type": "form",
-      "name": "BDR-1 Birth Registration Form",
-      "url": "https://www.registrar-general.gov.lk/forms",
-      "label": "Download Form"
-    },
-    {
-      "type": "office",
-      "name": "Divisional Secretariat (nearest)",
-      "url": "https://www.dsboffice.gov.lk",
-      "label": "Visit Office"
-    },
-    {
-      "type": "law",
-      "name": "Births and Deaths Registration Act No. 17 of 1951",
-      "url": "https://www.registrar-general.gov.lk",
-      "label": "View Law"
-    }
-  ],
-  "session_id": "550e8400-e29b-41d4-a716-446655440000"
-}
-```
-
-**Resource object:**
-
-| Field | Type | Values |
-|-------|------|--------|
-| `type` | string | `"form"`, `"office"`, `"law"` |
-| `name` | string | Display name |
-| `url` | string \| null | Link or address text |
-| `label` | string | `"Download Form"`, `"Visit Office"`, `"View Law"` |
-
-**Error response `500`:**
-
-```json
-{ "error": "OPENAI_API_KEY is not set" }
-```
-
-**Reply footer (when resources exist):**
-
-| Language | Appended sentence |
-|----------|-------------------|
-| `en` | You can find the relevant forms and office details in the panel on the right. |
-| `si` | අදාළ ලේඛන සහ කාර්යාල තොරතුරු දකුණු පැත්තේ පෙනෙනු ඇත. |
-| `ta` | சம்பந்தப்பட்ட படிவங்கள் மற்றும் அலுவலக விவரங்களை வலதுபுற panel-இல் காணலாம். |
-
-**`OPTIONS /api/chat`:** CORS preflight (empty body).
-
----
-
-### `POST /api/avatar` — Avatar stream URL
-
-**Purpose:** Convert reply text to speech (ElevenLabs) and start Beyond Presence WebRTC stream.
-
-**Request body:**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `text` | string | *required* | Text to speak (usually `reply` from chat) |
-| `language` | string | `"en"` | `"en"`, `"si"`, or `"ta"` — selects voice ID |
-
-**Example request:**
-
-```json
-{
-  "text": "To apply for a birth certificate, visit your Divisional Secretariat.",
-  "language": "en"
-}
-```
-
-**Success response `200`:**
-
-```json
-{
-  "stream_url": "https://api.beyondpresence.ai/...",
-  "audio_generated": true
-}
-```
-
-**Error response `200` (check body, not HTTP status):**
-
-```json
-{
-  "stream_url": null,
-  "audio_generated": false,
-  "error": "ELEVENLABS_API_KEY is not set"
-}
-```
-
-**Pipeline:**
-
-1. `POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}` — model `eleven_multilingual_v2`
-2. Base64-encode audio
-3. `POST https://api.beyondpresence.ai/v1/stream` — `persona_id`, `audio`, `format: "webrtc"`
-4. Return `stream_url` from response
-
-**Voice ID mapping:**
-
-| `language` | Env variable |
-|------------|--------------|
-| `en` | `VOICE_ID_EN` |
-| `si` | `VOICE_ID_SI` |
-| `ta` | `VOICE_ID_TA` |
-
-**`OPTIONS /api/avatar`:** CORS preflight.
-
----
-
-### `GET /api/status` — Dashboard / n8n badge
-
-**Purpose:** Sync stats for UI badges (sites indexed, last sync, vector doc count).
-
-**Response `200`:**
-
-```json
-{
-  "n8n_sites": 312,
-  "last_sync": "2026-05-16T10:30:00+00:00",
-  "vector_docs": 15,
-  "status": "online"
-}
-```
-
-| Field | Source |
-|-------|--------|
-| `n8n_sites` | `content/synced/n8n_sites.json` → key `n8n_sites`, else **312** (demo default) |
-| `last_sync` | `content/synced/synced_at.txt` ISO string, or **`"never"`** |
-| `vector_docs` | `COUNT(*)` on Supabase `documents` table |
-| `status` | Always `"online"` when endpoint responds |
-
-**Optional `content/synced/n8n_sites.json`:**
-
-```json
-{ "n8n_sites": 312 }
-```
-
-**Optional `content/synced/synced_at.txt`:**
-
-```
-2026-05-16T10:30:00+00:00
-```
-
----
-
-### `POST /api/reindex` — Reindex vector store (webhook)
-
-**Purpose:** Reload all `content/**/*.md` into Supabase. Called by n8n after bulk content updates.
-
-**Headers:**
-
-```
-x-webhook-secret: <value of N8N_WEBHOOK_SECRET>
-```
-
-**Success `200`:**
-
-```json
-{
-  "status": "reindexed",
-  "timestamp": "2026-05-16T12:00:00+00:00",
-  "count": 4
-}
-```
-
-**Error `401`:**
-
-```json
-{ "detail": "Invalid webhook secret" }
-```
-
-**Not for public frontend** — server-to-server only.
-
----
-
-### `POST /api/n8n/convert` — HTML to Markdown (n8n pipeline)
-
-**Purpose:** Convert scraped government HTML to Markdown, optionally translate to Sinhala, upsert into vector DB.
-
-**Request body:**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `title` | string | *required* | Page title |
-| `content` | string | *required* | Raw HTML or text |
-| `dept` | string | *required* | Department / service ID |
-| `url` | string | *required* | Source URL |
-| `language` | string | `"en"` | Trigger Sinhala translation if `"si"` or dept has SI hint |
-
-**Example request:**
-
-```json
-{
-  "title": "Birth Certificate",
-  "content": "<html>...</html>",
-  "dept": "RegistrarGeneral",
-  "url": "https://www.registrar-general.gov.lk",
-  "language": "en"
-}
-```
-
-**Success `200`:**
-
-```json
-{
-  "markdown": "---\nservice_id: RegistrarGeneral\n...",
-  "dept": "RegistrarGeneral",
-  "url": "https://www.registrar-general.gov.lk",
-  "si_markdown": null
-}
-```
-
-| Field | Description |
-|-------|-------------|
-| `markdown` | English Markdown with YAML frontmatter |
-| `si_markdown` | Sinhala Markdown if translation ran, else `null` |
-
-**Side effects:** Upserts EN (and SI if present) into Supabase `documents`.
-
----
-
-### `GET /api/resources/` — Stub
-
-**Status:** Not implemented.
-
-**Response `200`:**
-
-```json
-{ "message": "Resources API" }
-```
-
-**Use `resources` from `POST /api/chat` instead** for the Resource Box UI.
-
----
-
-## Frontend integration guide
-
-### Endpoints the UI must use
-
-| Priority | Endpoint | When |
-|----------|----------|------|
-| **Required** | `POST /api/chat` | Every user message |
-| **Required** | `GET /api/status` | Dashboard badges / sync indicator |
-| **If avatar** | `POST /api/avatar` | After chat reply, to drive WebRTC avatar |
-| Optional | `GET /` | Health dot on load |
-
-### Recommended chat flow
-
-```
-User types message
-    → POST /api/chat { message, language, history, session_id }
-    → Display reply in chat bubble
-    → Render resources[] in Resource Box panel
-    → Save session_id + append to history
-    → (Optional) POST /api/avatar { text: reply, language }
-    → Connect stream_url to Beyond Presence player
-```
-
-### JavaScript example
-
-```javascript
-const API = "http://localhost:8000";
-
-// Chat
-const chatRes = await fetch(`${API}/api/chat`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    message: userInput,
-    language: selectedLang, // "auto" | "en" | "si" | "ta"
-    history: conversationHistory,
-    session_id: storedSessionId ?? null,
-  }),
-});
-const chat = await chatRes.json();
-
-if (!chatRes.ok || chat.error) {
-  showError(chat.error ?? "Chat failed");
-  return;
-}
-
-storedSessionId = chat.session_id;
-conversationHistory.push({ role: "user", content: userInput });
-conversationHistory.push({ role: "assistant", content: chat.reply });
-
-renderMessage(chat.reply);
-renderResourceBox(chat.resources); // type, name, url, label
-
-// Avatar (optional)
-const avatarRes = await fetch(`${API}/api/avatar`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ text: chat.reply, language: chat.language }),
-});
-const avatar = await avatarRes.json();
-
-if (avatar.audio_generated && avatar.stream_url) {
-  startWebRTCPlayer(avatar.stream_url);
-}
-
-// Status badge (on load or interval)
-const status = await fetch(`${API}/api/status`).then((r) => r.json());
-updateBadge(`${status.n8n_sites} sites · ${status.vector_docs} docs`);
-```
-
-### Frontend checklist
-
-- [ ] Send full `history` each turn (user + assistant messages)
-- [ ] Persist `session_id` (localStorage / state)
-- [ ] Map `resources` to Resource Box — use `label` for button text
-- [ ] Handle chat `500` via `error` field
-- [ ] Handle avatar failures via `audio_generated === false` (HTTP may still be 200)
-- [ ] Do **not** call `/api/reindex` or `/api/n8n/convert` from the public UI
-- [ ] Do **not** expect resources from `/api/resources` (stub)
-
----
-
-## Internal / n8n endpoints
-
-| Endpoint | Caller | Secret |
-|----------|--------|--------|
-| `POST /api/n8n/convert` | n8n scrape workflow | None (restrict by network in production) |
-| `POST /api/reindex` | n8n post-sync | `x-webhook-secret: N8N_WEBHOOK_SECRET` |
-
-**Suggested n8n flow:**
-
-1. Scrape gov site → `POST /api/n8n/convert`
-2. Write/sync Markdown to `content/` (optional)
-3. Update `content/synced/synced_at.txt`
-4. `POST /api/reindex` with webhook secret
-
----
-
-## Core library modules
-
-### `lib/rag.py`
-
-| Function | Description |
-|----------|-------------|
-| `get_embedding(text)` | OpenAI `text-embedding-3-small` → 1536-dim vector |
-| `search_knowledge(query, language, k=5)` | RPC `match_documents` on Supabase |
-| `upsert_document(...)` | Embed + insert/update by `(dept, language)` |
-| `reload_vector_store()` | Re-index all `content/**/*.md` |
-| `count_documents()` | Row count for status endpoint |
-
-### `lib/openai_client.py`
-
-| Function | Model | Use |
-|----------|-------|-----|
-| `generate_response(message, context, history, language)` | `gpt-4o` | EN/TA chat |
-
-System prompt includes `KNOWLEDGE:` context and instructs model to append structured `RESOURCES:` block.
-
-### `lib/gemini_client.py`
-
-| Function | Model | Use |
-|----------|-------|-----|
-| `generate_sinhala_response(message, context, history)` | `gemini-1.5-pro` | SI chat |
-
-Uses `RESOURCE:` inline markers instead of `RESOURCES:` block format.
-
-### `lib/language_detector.py`
-
-| Function | Returns |
-|----------|---------|
-| `detect_language(text)` | `"en"`, `"si"`, or `"ta"` |
-
-### `lib/resource_extractor.py`
-
-| Function | Description |
-|----------|-------------|
-| `extract_resources(text)` | Parse resources → `[{type, name, url, label}]` |
-| `strip_resources_from_reply(text)` | Remove resource markers from display text |
-
-**Supported formats:**
-
-- `RESOURCES:` section with `- FORM:`, `- OFFICE:`, `- LAW:` lines
-- Sinhala `සම්පත්:` lines
-- Inline `RESOURCE:` (Gemini)
-
----
-
-## Language detection
-
-Used when chat `language` is `"auto"`.
-
-**Priority order:**
-
-1. **Sinhala Unicode** (`\u0D80`–`\u0DFF`) → `"si"` (always; fixes langdetect on short Sinhala)
-2. **Tamil Unicode** (`\u0B80`–`\u0BFF`) → `"ta"`
-3. **langdetect** → map `si`/`ta`, else `"en"`
-4. **On failure** → `"en"`
-
-**LLM routing after detection:**
-
-| Resolved language | Engine | Model |
-|-----------------|--------|-------|
-| `si` | `gemini` | `gemini-1.5-pro` |
-| `en`, `ta` | `openai` | `gpt-4o` |
-
-RAG search filters documents by resolved `language`.
-
----
-
-## Chat pipeline (detailed)
-
-```
-1. Resolve language (auto-detect or explicit en/si/ta)
-2. Generate session_id (uuid4) if not provided
-3. search_knowledge(message, language, k=5)
-4. Build context string with source_url + dept per chunk
-5. If language == "si":
-     generate_sinhala_response()  → Gemini
-   Else:
-     generate_response()          → OpenAI GPT-4o
-6. extract_resources(raw_reply)
-7. strip_resources_from_reply() + append panel footer if resources exist
-8. Return { reply, engine, language, resources, session_id }
-```
-
----
-
-## Resource extraction
-
-**OpenAI** is instructed to output:
-
-```
-RESOURCES:
-- FORM: [name] | [url]
-- OFFICE: [name] | [address or url]
-- LAW: [name] | [url]
-```
-
-**Gemini (Sinhala)** may use `RESOURCE:` inline or `සම්පත්:` prefixes.
-
-The backend parses all formats, returns structured `resources[]`, and strips markers from `reply` so the frontend only renders resources in the Resource Box panel.
-
----
-
-## CORS & errors
-
-### CORS
-
-- **Global middleware** (`main.py`): `allow_origins=["*"]`, all methods/headers
-- **Chat & avatar routes:** explicit `Access-Control-Allow-*` headers on responses
-
-### Error patterns
-
-| Endpoint | Success | Error |
-|----------|---------|-------|
-| `/api/chat` | 200 + body | 500 + `{"error": "..."}` |
-| `/api/avatar` | 200 + `audio_generated: true` | 200 + `audio_generated: false` + `error` |
-| `/api/reindex` | 200 | 401 `detail` |
-| `/api/status` | 200 | `vector_docs: 0` if DB unreachable |
+Shared entry point: `lib/chat_service.py` → `run_chat()`.  
+Avatar live and live-eleven use the same function with `voice_mode=True` (shorter spoken-style answers).
 
 ---
 
 ## Troubleshooting
 
-| Problem | Likely cause | Fix |
-|---------|--------------|-----|
-| `OPENAI_API_KEY is not set` | Missing `.env` | Set key, restart server |
-| Empty chat answers | No seeded documents | Run `python seed_content.py` |
-| `vector_docs: 0` on status | Supabase not configured / empty table | Run SQL + seed |
-| Avatar `audio_generated: false` | ElevenLabs or BP keys/voices | Check `ELEVENLABS_API_KEY`, `VOICE_ID_*`, `BEYOND_PRESENCE_API_KEY` |
-| Sinhala detected as English | Old detector | Ensure Unicode block rules in `language_detector.py` |
-| Reindex 401 | Wrong webhook secret | Match `N8N_WEBHOOK_SECRET` header |
-| CORS from browser | Wrong API URL | Point frontend to `http://localhost:8000` |
+| Problem | Fix |
+|---------|-----|
+| `ready: false` on avatar live | Set `BEYOND_PRESENCE_API_KEY`, Supabase keys |
+| `voice_uses_supabase_rag: false` | Set `NILA_PUBLIC_BASE_URL`, restart API, run `./scripts/complete-voice-rag-setup.sh` |
+| Bey 404 agent | `POST /api/avatar/setup`, set `BEY_AGENT_ID` in `.env` |
+| No mic prompt | Connect on **button click**; call `setMicrophoneEnabled(true)` |
+| Resources empty | Ask a **government** question; check `rag-test` endpoint |
+| Tunnel died | Restart tunnel; update `.env` URL; run setup again |
+| ngrok auth error | `ngrok config add-authtoken ...` or use `./scripts/start-public-tunnel.sh` (Cloudflare) |
+| Empty chat answers | Run `python seed_content.py` |
+| Sinhala wrong language | Unicode rules in `lib/language_detector.py` |
 
 ### Useful commands
 
@@ -875,16 +547,28 @@ curl -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message":"How do I get a birth certificate?","language":"en"}'
 
-# Status
-curl http://localhost:8000/api/status
+# Avatar live status
+curl http://localhost:8000/api/avatar/live/status
 
-# Reindex (replace SECRET)
-curl -X POST http://localhost:8000/api/reindex \
-  -H "x-webhook-secret: SECRET"
+# Supabase RAG test
+curl "http://localhost:8000/api/avatar/live/rag-test?query=birth+registration"
+
+# Bey agent setup
+curl -X POST http://localhost:8000/api/avatar/setup \
+  -H "Content-Type: application/json" \
+  -d '{"public_base_url":"https://YOUR-TUNNEL-URL"}'
 ```
 
 ---
 
-## License & contributors
+## Security notes
 
-GIC / Visioneers buildathon project. For questions about API contracts, see [Frontend integration guide](#frontend-integration-guide) or open an issue in the repository.
+- Keep `SUPABASE_SERVICE_KEY`, `OPENAI_API_KEY`, `BEYOND_PRESENCE_API_KEY`, and `BEY_LLM_API_SECRET` on the server only.
+- CORS is `*` for development; restrict in production.
+- `/api/reindex` requires `x-webhook-secret`.
+
+---
+
+## License
+
+GIC / Visioneers buildathon project. For API questions, use `/docs` or open an issue on GitHub.
