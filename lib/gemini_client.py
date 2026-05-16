@@ -12,7 +12,7 @@ SYSTEM_INSTRUCTION = (
     "it with RESOURCE: so it can be extracted. If you cannot answer, say so in Sinhala "
     "and suggest calling 1919."
 )
-MODEL_NAME = "gemini-1.5-pro"
+MODEL_NAME = "gemini-3.1-flash-lite"
 
 
 @lru_cache(maxsize=1)

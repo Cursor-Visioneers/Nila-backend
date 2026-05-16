@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nila — English Live</title>
+  <style>
+    :root {
+      --bg: #050810;
+      --panel: #111827;
+      --border: #1f2937;
+      --text: #f3f4f6;
+      --muted: #9ca3af;
+      --live: #2563eb;
+      --on: #22c55e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      height: 100vh;
+      font-family: system-ui, sans-serif;
+      background: radial-gradient(ellipse at top, #1e3a5f 0%, var(--bg) 55%);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      background: var(--panel);
+    }
+    header h1 { margin: 0; font-size: 1rem; flex: 1; }
+    header input {
+      padding: 0.35rem 0.5rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+    }
+    .badge {
+      font-size: 0.72rem;
+      color: #93c5fd;
+      background: #172554;
+      padding: 0.2rem 0.45rem;
+      border-radius: 4px;
+    }
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      min-height: 0;
+    }
+    @media (max-width: 860px) {
+      main { grid-template-columns: 1fr; }
+      aside { display: none; }
+    }
+    .center {
+      padding: 1rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .status-panel {
+      width: 100%;
+      max-width: 480px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1rem;
+      margin-bottom: 0.75rem;
+    }
+    #status { font-size: 1rem; font-weight: 600; margin: 0 0 0.25rem; }
+    #detail { font-size: 0.85rem; color: var(--muted); margin: 0; min-height: 2rem; }
+    .orb {
+      width: 88px;
+      height: 88px;
+      border-radius: 50%;
+      margin: 0.75rem auto 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+      background: #1f2937;
+    }
+    .orb.live { background: var(--live); box-shadow: 0 0 32px rgba(37,99,235,0.45); animation: pulse 1s infinite; }
+    .orb.on { background: var(--on); }
+    @keyframes pulse { 50% { transform: scale(1.06); } }
+    .meter-wrap {
+      height: 6px;
+      background: #0a0e14;
+      border-radius: 3px;
+      margin-top: 0.5rem;
+      overflow: hidden;
+    }
+    #volumeMeter { height: 100%; width: 0%; background: var(--live); transition: width 0.05s; }
+    button {
+      padding: 0.65rem 1.1rem;
+      border: none;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+    #btnConnect { background: var(--live); color: #fff; }
+    #btnDisconnect { background: #374151; color: #fff; display: none; }
+    #log {
+      width: 100%;
+      max-width: 480px;
+      max-height: 160px;
+      overflow-y: auto;
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: 0.75rem;
+    }
+    aside {
+      border-left: 1px solid var(--border);
+      background: var(--panel);
+      padding: 0.75rem;
+      overflow-y: auto;
+    }
+    aside h2 { font-size: 0.85rem; margin: 0 0 0.5rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .resource {
+      font-size: 0.82rem;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+      background: #0a0e14;
+    }
+    .resource strong { display: block; color: #93c5fd; font-size: 0.72rem; margin-bottom: 0.2rem; }
+    .resource a { color: #60a5fa; word-break: break-all; }
+    .empty-resources { font-size: 0.8rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Nila · English Live</h1>
+    <span class="badge">Full duplex · OpenAI Realtime</span>
+    <input id="wsUrl" value="ws://localhost:8000/api/live/en/ws" style="width:240px" />
+    <button type="button" id="btnConnect">Connect</button>
+    <button type="button" id="btnDisconnect">Disconnect</button>
+    <span style="font-size:0.75rem;color:var(--muted);width:100%">ElevenLabs: <a href="/live-eleven" style="color:#93c5fd">/live-eleven</a> · Sinhala: <a href="/live" style="color:#93c5fd">/live</a></span>
+  </header>
+
+  <main>
+    <div class="center">
+      <div class="status-panel">
+        <p id="status">Offline</p>
+        <p id="detail">Full-duplex: speak anytime — Nila can be interrupted. Use headphones.</p>
+        <div class="meter-wrap"><div id="volumeMeter"></div></div>
+        <div id="orb" class="orb">🎙️</div>
+      </div>
+      <div id="log"></div>
+    </div>
+
+    <aside>
+      <h2>Resources</h2>
+      <div id="resources">
+        <p class="empty-resources">Forms and offices appear here when Nila searches the knowledge base.</p>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const SAMPLE_RATE = 24000;
+    let ws = null;
+    let micStream = null;
+    let audioCtx = null;
+    let processor = null;
+    let playbackCtx = null;
+    let nextPlayTime = 0;
+    let activeSources = [];
+
+    function log(msg) {
+      const p = document.createElement("p");
+      p.textContent = msg;
+      p.style.margin = "0.2rem 0";
+      $("log").appendChild(p);
+      $("log").scrollTop = $("log").scrollHeight;
+    }
+
+    function renderResources(list) {
+      const box = $("resources");
+      if (!list || !list.length) {
+        box.innerHTML = '<p class="empty-resources">No resources yet for this turn.</p>';
+        return;
+      }
+      box.innerHTML = list
+        .map(
+          (r) => `
+        <div class="resource">
+          <strong>${escapeHtml(r.label || r.type)}</strong>
+          ${escapeHtml(r.name)}
+          ${r.url ? `<br/><a href="${escapeAttr(r.url)}" target="_blank" rel="noopener">Open link</a>` : ""}
+        </div>`
+        )
+        .join("");
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function escapeAttr(s) {
+      return String(s).replace(/"/g, "&quot;");
+    }
+
+    function floatTo16BitPCM(float32) {
+      const buf = new Int16Array(float32.length);
+      for (let i = 0; i < float32.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32[i]));
+        buf[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      return buf;
+    }
+
+    function arrayBufferToBase64(buffer) {
+      let binary = "";
+      const bytes = new Uint8Array(buffer);
+      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    }
+
+    function resetPlayback() {
+      activeSources.forEach((s) => {
+        try { s.stop(); } catch (_) {}
+      });
+      activeSources = [];
+      nextPlayTime = 0;
+      if (playbackCtx) {
+        playbackCtx.close().catch(() => {});
+        playbackCtx = null;
+      }
+    }
+
+    function updateMeter() {
+      if (!audioCtx) return;
+      const analyser = audioCtx._analyser;
+      if (!analyser) return;
+      const data = new Uint8Array(analyser.fftSize);
+      analyser.getByteTimeDomainData(data);
+      let peak = 0;
+      for (let i = 0; i < data.length; i++) {
+        const v = Math.abs(data[i] - 128) / 128;
+        if (v > peak) peak = v;
+      }
+      $("volumeMeter").style.width = `${Math.min(100, peak * 400)}%`;
+    }
+
+    function playPcm24k(pcmBytes) {
+      if (!playbackCtx) playbackCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+      const int16 = new Int16Array(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength / 2);
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
+      const buffer = playbackCtx.createBuffer(1, float32.length, SAMPLE_RATE);
+      buffer.copyToChannel(float32, 0);
+      const source = playbackCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(playbackCtx.destination);
+      const start = Math.max(playbackCtx.currentTime, nextPlayTime);
+      source.start(start);
+      nextPlayTime = start + buffer.duration;
+      activeSources.push(source);
+      source.onended = () => {
+        activeSources = activeSources.filter((x) => x !== source);
+      };
+      $("orb").className = "orb on";
+    }
+
+    async function startMic() {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+      });
+      audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+      await audioCtx.resume();
+      const source = audioCtx.createMediaStreamSource(micStream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      audioCtx._analyser = analyser;
+      processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processor.onaudioprocess = (e) => {
+        updateMeter();
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const pcm = floatTo16BitPCM(e.inputBuffer.getChannelData(0));
+        ws.send(JSON.stringify({ type: "audio", data: arrayBufferToBase64(pcm.buffer) }));
+      };
+      analyser.connect(processor);
+      processor.connect(audioCtx.destination);
+    }
+
+    function stopMic() {
+      processor?.disconnect();
+      audioCtx?.close();
+      micStream?.getTracks().forEach((t) => t.stop());
+      processor = null;
+      audioCtx = null;
+      micStream = null;
+    }
+
+    function connect() {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      const defaultWs = `${proto}//${location.host}/api/live/en/ws`;
+      const url = $("wsUrl").value.trim() || defaultWs;
+      ws = new WebSocket(url);
+      $("status").textContent = "Connecting…";
+
+      ws.onopen = async () => {
+        $("status").textContent = "Live";
+        $("detail").textContent = "Speak naturally — you can interrupt Nila mid-sentence.";
+        $("orb").className = "orb live";
+        $("btnConnect").style.display = "none";
+        $("btnDisconnect").style.display = "inline-block";
+        renderResources([]);
+        log("Connected (full duplex).");
+        try {
+          await startMic();
+        } catch (e) {
+          log("Mic error: " + e.message);
+        }
+      };
+
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "status") {
+          $("detail").textContent = msg.message;
+        } else if (msg.type === "speech_started") {
+          resetPlayback();
+          $("orb").className = "orb live";
+          $("detail").textContent = "Listening…";
+        } else if (msg.type === "resources") {
+          renderResources(msg.resources || []);
+        } else if (msg.type === "audio") {
+          const bytes = Uint8Array.from(atob(msg.data), (c) => c.charCodeAt(0));
+          playPcm24k(bytes);
+        } else if (msg.type === "text") {
+          const who = msg.role === "user" ? "You" : "Nila";
+          log(`${who}: ${msg.text}`);
+        } else if (msg.type === "error") {
+          $("status").textContent = "Error";
+          $("detail").textContent = msg.message;
+          log("Error: " + msg.message);
+        }
+      };
+
+      ws.onclose = () => disconnect(false);
+    }
+
+    function disconnect(user) {
+      stopMic();
+      resetPlayback();
+      ws?.close();
+      ws = null;
+      $("status").textContent = "Offline";
+      $("detail").textContent = user ? "Disconnected." : "Closed.";
+      $("orb").className = "orb";
+      $("btnConnect").style.display = "inline-block";
+      $("btnDisconnect").style.display = "none";
+      renderResources([]);
+    }
+
+    $("btnConnect").addEventListener("click", connect);
+    $("btnDisconnect").addEventListener("click", () => disconnect(true));
+  </script>
+</body>
+</html>

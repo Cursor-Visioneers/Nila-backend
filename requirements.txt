@@ -3,9 +3,11 @@ uvicorn
 python-dotenv
 openai
 google-generativeai
+google-genai
 supabase
 httpx
 langdetect
 pydantic
 python-multipart
 sse-starlette
+websockets

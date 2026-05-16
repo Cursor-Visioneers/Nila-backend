@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nila — Live Chat</title>
+  <style>
+    :root {
+      --bg: #0c1117;
+      --panel: #151b24;
+      --border: #2a3544;
+      --text: #e8edf4;
+      --muted: #8b9cb3;
+      --user: #1e3a5f;
+      --bot: #1a2332;
+      --accent: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      flex-wrap: wrap;
+      background: var(--panel);
+    }
+    header h1 { font-size: 1rem; margin: 0; flex: 1; }
+    header label { font-size: 0.75rem; color: var(--muted); }
+    header select, header input {
+      padding: 0.35rem 0.5rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+    }
+    #apiBase { width: 200px; }
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      min-height: 0;
+    }
+    @media (max-width: 800px) {
+      main { grid-template-columns: 1fr; }
+      aside { display: none; }
+    }
+    #messages {
+      overflow-y: auto;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .msg {
+      max-width: 85%;
+      padding: 0.65rem 0.9rem;
+      border-radius: 12px;
+      font-size: 0.95rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+    .msg.user { align-self: flex-end; background: var(--user); }
+    .msg.bot { align-self: flex-start; background: var(--bot); border: 1px solid var(--border); }
+    .msg .meta { font-size: 0.7rem; color: var(--muted); margin-top: 0.35rem; }
+    aside {
+      border-left: 1px solid var(--border);
+      background: var(--panel);
+      padding: 0.75rem;
+      overflow-y: auto;
+    }
+    aside h2 { font-size: 0.85rem; margin: 0 0 0.5rem; color: var(--muted); }
+    .resource {
+      font-size: 0.8rem;
+      padding: 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+    }
+    .resource a { color: #60a5fa; }
+    footer {
+      padding: 0.75rem 1rem;
+      border-top: 1px solid var(--border);
+      background: var(--panel);
+      display: flex;
+      gap: 0.5rem;
+    }
+    #input {
+      flex: 1;
+      padding: 0.65rem 0.85rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 1rem;
+    }
+    button {
+      padding: 0.65rem 1.1rem;
+      border: none;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .typing { color: var(--muted); font-size: 0.85rem; padding: 0 1rem 0.5rem; }
+    label.chk { font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Nila — Live conversation</h1>
+    <label>API <input id="apiBase" value="http://localhost:8000" /></label>
+    <label>Lang
+      <select id="language">
+        <option value="auto">Auto</option>
+        <option value="en">EN</option>
+        <option value="si">SI</option>
+        <option value="ta">TA</option>
+      </select>
+    </label>
+    <label class="chk"><input type="checkbox" id="speakAvatar" /> Avatar voice after reply</label>
+    <button type="button" id="btnClear" style="background:#374151">New chat</button>
+  </header>
+
+  <div class="typing" id="status"></div>
+  <main>
+    <div id="messages"></div>
+    <aside>
+      <h2>Resources</h2>
+      <div id="resources"><p style="color:var(--muted);font-size:0.8rem">Forms & offices appear here.</p></div>
+      <h2 style="margin-top:1rem">Avatar</h2>
+      <p id="avatarStatus" style="font-size:0.8rem;color:var(--muted)">—</p>
+      <audio id="ttsFallback" controls style="width:100%;display:none;margin-top:0.5rem"></audio>
+    </aside>
+  </main>
+
+  <footer>
+    <input id="input" type="text" placeholder="Ask about government services…" autocomplete="off" />
+    <button type="button" id="btnSend">Send</button>
+  </footer>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let history = [];
+    let sessionId = null;
+
+    function api() { return $("apiBase").value.replace(/\/$/, ""); }
+
+    function addMessage(role, text, meta = "") {
+      const el = document.createElement("div");
+      el.className = `msg ${role}`;
+      el.innerHTML = `${escapeHtml(text)}${meta ? `<div class="meta">${meta}</div>` : ""}`;
+      $("messages").appendChild(el);
+      $("messages").scrollTop = $("messages").scrollHeight;
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
+    function renderResources(list) {
+      const box = $("resources");
+      if (!list || !list.length) {
+        box.innerHTML = '<p style="color:var(--muted);font-size:0.8rem">No resources this turn.</p>';
+        return;
+      }
+      box.innerHTML = list.map((r) => `
+        <div class="resource">
+          <strong>${r.label || r.type}</strong><br/>
+          ${escapeHtml(r.name)}<br/>
+          ${r.url ? `<a href="${r.url}" target="_blank" rel="noopener">Open</a>` : ""}
+        </div>
+      `).join("");
+    }
+
+    async function speakAvatar(text, language) {
+      $("avatarStatus").textContent = "Generating voice…";
+      $("ttsFallback").style.display = "none";
+      try {
+        const res = await fetch(`${api()}/api/avatar`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, language }),
+        });
+        const data = await res.json();
+        if (data.audio_generated && data.stream_url) {
+          $("avatarStatus").innerHTML = `<a href="${data.stream_url}" target="_blank">Open avatar stream</a>`;
+          window.open(data.stream_url, "_blank");
+        } else {
+          const tts = await fetch(`${api()}/api/avatar/tts`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, language }),
+          });
+          const ttsData = await tts.json();
+          if (ttsData.audio_base64) {
+            $("ttsFallback").src = `data:audio/mpeg;base64,${ttsData.audio_base64}`;
+            $("ttsFallback").style.display = "block";
+            $("ttsFallback").play();
+            $("avatarStatus").textContent = "Playing TTS (BP unavailable)";
+          } else {
+            $("avatarStatus").textContent = data.error || ttsData.error || "Avatar failed";
+          }
+        }
+      } catch (e) {
+        $("avatarStatus").textContent = e.message;
+      }
+    }
+
+    async function sendMessage() {
+      const text = $("input").value.trim();
+      if (!text) return;
+
+      $("input").value = "";
+      $("btnSend").disabled = true;
+      $("status").textContent = "Nila is thinking…";
+      addMessage("user", text);
+
+      try {
+        const res = await fetch(`${api()}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: text,
+            language: $("language").value,
+            history,
+            session_id: sessionId,
+          }),
+        });
+        const data = await res.json();
+
+        if (!res.ok || data.error) {
+          addMessage("bot", data.error || "Something went wrong.");
+          $("status").textContent = "";
+          return;
+        }
+
+        sessionId = data.session_id;
+        history.push({ role: "user", content: text });
+        history.push({ role: "assistant", content: data.reply });
+
+        addMessage("bot", data.reply, `${data.language} · ${data.engine}`);
+        renderResources(data.resources);
+        $("status").textContent = "";
+
+        if ($("speakAvatar").checked) {
+          await speakAvatar(data.reply, data.language);
+        }
+      } catch (e) {
+        addMessage("bot", "Network error: " + e.message);
+        $("status").textContent = "";
+      } finally {
+        $("btnSend").disabled = false;
+        $("input").focus();
+      }
+    }
+
+    $("btnSend").addEventListener("click", sendMessage);
+    $("input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+
+    $("btnClear").addEventListener("click", () => {
+      history = [];
+      sessionId = null;
+      $("messages").innerHTML = "";
+      renderResources([]);
+      $("avatarStatus").textContent = "—";
+      $("status").textContent = "";
+      addMessage("bot", "Hi, I'm Nila. Ask me about Sri Lanka government services.");
+    });
+
+    addMessage("bot", "Hi, I'm Nila. Ask me about Sri Lanka government services.");
+    $("input").focus();
+  </script>
+</body>
+</html>

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nila — Voice & Avatar Test</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #3b82f6;
+      --ok: #22c55e;
+      --err: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 1.5rem;
+      line-height: 1.5;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.25rem; }
+    .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .grid { display: grid; gap: 1rem; max-width: 720px; }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.35rem; }
+    input, select, textarea {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--card);
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+    textarea { min-height: 100px; resize: vertical; }
+    .row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    button {
+      padding: 0.6rem 1rem;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .primary { background: var(--accent); color: #fff; }
+    .secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem;
+    }
+    .card h2 { font-size: 1rem; margin: 0 0 0.75rem; }
+    pre {
+      background: #0a0e14;
+      padding: 0.75rem;
+      border-radius: 8px;
+      overflow: auto;
+      font-size: 0.8rem;
+      max-height: 280px;
+      margin: 0;
+    }
+    .status { font-size: 0.85rem; margin-top: 0.5rem; }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--err); }
+    .status.muted { color: var(--muted); }
+    audio { width: 100%; margin-top: 0.75rem; }
+    #streamFrame {
+      width: 100%;
+      min-height: 360px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 0.75rem;
+      background: #000;
+    }
+    a.stream-link { color: var(--accent); word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>Nila — Voice & Avatar Test</h1>
+  <p class="sub">Tests ElevenLabs TTS and Beyond Presence via your local API.</p>
+
+  <div class="grid">
+    <div class="card">
+      <label for="apiBase">API base URL</label>
+      <input id="apiBase" type="url" value="http://localhost:8000" />
+    </div>
+
+    <div class="card">
+      <label for="text">Text to speak</label>
+      <textarea id="text">Hello, I am Nila, your government services assistant for Sri Lanka.</textarea>
+
+      <div style="margin-top: 0.75rem">
+        <label for="language">Language</label>
+        <select id="language">
+          <option value="en">English (en)</option>
+          <option value="si">Sinhala (si)</option>
+          <option value="ta">Tamil (ta)</option>
+        </select>
+      </div>
+
+      <div class="row" style="margin-top: 1rem">
+        <button type="button" class="secondary" id="btnTts">1. Test voice only (ElevenLabs)</button>
+        <button type="button" class="primary" id="btnAvatar">2. Test avatar (TTS + Beyond Presence)</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Voice (ElevenLabs)</h2>
+      <p id="ttsStatus" class="status muted">Not tested yet.</p>
+      <audio id="audioPlayer" controls style="display: none"></audio>
+    </div>
+
+    <div class="card">
+      <h2>Beyond Presence stream</h2>
+      <p id="bpStatus" class="status muted">Not tested yet.</p>
+      <p id="streamLinkWrap" style="display: none">
+        <a class="stream-link" id="streamLink" href="#" target="_blank" rel="noopener">Open stream URL</a>
+      </p>
+      <iframe id="streamFrame" title="Beyond Presence" style="display: none"></iframe>
+    </div>
+
+    <div class="card">
+      <h2>Raw API response</h2>
+      <pre id="log">{}</pre>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function apiBase() {
+      return $("apiBase").value.replace(/\/$/, "");
+    }
+
+    function payload() {
+      return {
+        text: $("text").value.trim(),
+        language: $("language").value,
+      };
+    }
+
+    function setLog(data) {
+      $("log").textContent = JSON.stringify(data, null, 2);
+    }
+
+    function setLoading(btn, on) {
+      btn.disabled = on;
+    }
+
+    async function postJson(path, body) {
+      const res = await fetch(`${apiBase()}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    }
+
+    $("btnTts").addEventListener("click", async () => {
+      const btn = $("btnTts");
+      setLoading(btn, true);
+      $("ttsStatus").className = "status muted";
+      $("ttsStatus").textContent = "Calling POST /api/avatar/tts …";
+      $("audioPlayer").style.display = "none";
+
+      try {
+        const { ok, status, data } = await postJson("/api/avatar/tts", payload());
+        setLog({ endpoint: "/api/avatar/tts", status, ...data });
+
+        if (ok && data.audio_generated && data.audio_base64) {
+          $("audioPlayer").src = `data:audio/mpeg;base64,${data.audio_base64}`;
+          $("audioPlayer").style.display = "block";
+          $("ttsStatus").className = "status ok";
+          $("ttsStatus").textContent = "Voice OK — play audio above.";
+          $("audioPlayer").play().catch(() => {});
+        } else {
+          $("ttsStatus").className = "status err";
+          $("ttsStatus").textContent = data.error || `Failed (HTTP ${status})`;
+        }
+      } catch (e) {
+        $("ttsStatus").className = "status err";
+        $("ttsStatus").textContent = e.message;
+        setLog({ error: e.message });
+      } finally {
+        setLoading(btn, false);
+      }
+    });
+
+    $("btnAvatar").addEventListener("click", async () => {
+      const btn = $("btnAvatar");
+      setLoading(btn, true);
+      $("bpStatus").className = "status muted";
+      $("bpStatus").textContent = "Calling POST /api/avatar … (TTS + Beyond Presence)";
+      $("streamFrame").style.display = "none";
+      $("streamLinkWrap").style.display = "none";
+
+      try {
+        const { ok, status, data } = await postJson("/api/avatar", payload());
+        setLog({ endpoint: "/api/avatar", status, ...data });
+
+        if (ok && data.audio_generated && data.stream_url) {
+          $("bpStatus").className = "status ok";
+          $("bpStatus").textContent = "Avatar stream URL received.";
+          $("streamLink").href = data.stream_url;
+          $("streamLink").textContent = data.stream_url;
+          $("streamLinkWrap").style.display = "block";
+          $("streamFrame").src = data.stream_url;
+          $("streamFrame").style.display = "block";
+        } else {
+          $("bpStatus").className = "status err";
+          $("bpStatus").textContent = data.error || `Failed (HTTP ${status})`;
+        }
+      } catch (e) {
+        $("bpStatus").className = "status err";
+        $("bpStatus").textContent = e.message;
+        setLog({ error: e.message });
+      } finally {
+        setLoading(btn, false);
+      }
+    });
+  </script>
+</body>
+</html>

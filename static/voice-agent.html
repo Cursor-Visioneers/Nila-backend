@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nila — Live Voice Agent</title>
+  <style>
+    :root {
+      --bg: #05080c;
+      --card: #101820;
+      --border: #243044;
+      --text: #f0f4f8;
+      --muted: #8fa3bf;
+      --listen: #22c55e;
+      --think: #f59e0b;
+      --speak: #3b82f6;
+      --record: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      height: 100vh;
+      font-family: system-ui, sans-serif;
+      background: radial-gradient(circle at 50% 0%, #1a2a44, var(--bg) 50%);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--card);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    header h1 { margin: 0; font-size: 1rem; flex: 1; }
+    .sub { color: var(--muted); font-size: 0.8rem; width: 100%; margin: 0; }
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      min-height: 0;
+    }
+    @media (max-width: 860px) {
+      main { grid-template-columns: 1fr; }
+      aside { display: none; }
+    }
+    .center {
+      overflow-y: auto;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    aside {
+      border-left: 1px solid var(--border);
+      background: var(--card);
+      padding: 0.75rem;
+      overflow-y: auto;
+    }
+    aside h2 {
+      font-size: 0.85rem;
+      margin: 0 0 0.5rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .resource {
+      font-size: 0.82rem;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+      background: #0a0e14;
+    }
+    .resource strong { display: block; color: #93c5fd; font-size: 0.72rem; margin-bottom: 0.2rem; }
+    .resource a { color: #60a5fa; word-break: break-all; }
+    .empty-resources { font-size: 0.8rem; color: var(--muted); }
+    .panel {
+      width: 100%;
+      max-width: 480px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    #statusTitle { font-size: 1.1rem; font-weight: 700; margin: 0 0 0.35rem; }
+    #statusDetail { font-size: 0.9rem; color: var(--muted); margin: 0; min-height: 2.5rem; }
+    .steps {
+      display: flex;
+      gap: 0.35rem;
+      margin-top: 0.75rem;
+      font-size: 0.7rem;
+    }
+    .step {
+      flex: 1;
+      text-align: center;
+      padding: 0.35rem;
+      border-radius: 6px;
+      background: #0a0e14;
+      color: var(--muted);
+    }
+    .step.active { background: #1e3a5f; color: #93c5fd; font-weight: 600; }
+    .step.done { background: #14532d; color: #86efac; }
+    .meter-wrap {
+      margin-top: 0.75rem;
+      height: 8px;
+      background: #0a0e14;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    #volumeMeter {
+      height: 100%;
+      width: 0%;
+      background: var(--listen);
+      transition: width 0.05s;
+    }
+    #meterLabel { font-size: 0.7rem; color: var(--muted); margin-top: 0.25rem; }
+    .orb {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+      margin: 0.5rem auto;
+    }
+    .orb.idle { background: #1e293b; }
+    .orb.listen { background: var(--listen); box-shadow: 0 0 32px rgba(34,197,94,0.5); animation: pulse 1.2s infinite; }
+    .orb.think { background: var(--think); }
+    .orb.speak { background: var(--speak); animation: pulse 0.9s infinite; }
+    .orb.record { background: var(--record); box-shadow: 0 0 24px rgba(239,68,68,0.5); }
+    @keyframes pulse { 50% { transform: scale(1.05); } }
+    .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; margin-bottom: 0.75rem; }
+    .controls input, .controls select {
+      padding: 0.4rem 0.6rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+    }
+    button {
+      padding: 0.75rem 1.25rem;
+      border: none;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #btnStart { background: var(--listen); color: #052e16; }
+    #btnDone {
+      background: #dc2626;
+      color: #fff;
+      font-size: 1.05rem;
+      display: none;
+      width: 100%;
+      max-width: 480px;
+      margin-bottom: 0.5rem;
+    }
+    #btnStop { background: #374151; color: var(--text); display: none; }
+    label.chk { font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.75rem; }
+    #transcript {
+      width: 100%;
+      max-width: 480px;
+      min-height: 100px;
+      max-height: 200px;
+      overflow-y: auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.75rem 1rem;
+      font-size: 0.85rem;
+    }
+    .line { margin-bottom: 0.5rem; }
+    .line.you { color: #93c5fd; }
+    .line.nila { color: #86efac; }
+    .line.sys { color: var(--muted); font-style: italic; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Nila Voice (EN / TA / SI)</h1>
+    <input id="apiBase" value="http://localhost:8000" style="width:190px" />
+    <select id="language">
+      <option value="auto">Auto</option>
+      <option value="en">English</option>
+      <option value="si">Sinhala</option>
+      <option value="ta">Tamil</option>
+    </select>
+    <p class="sub">Whisper + Supabase RAG + OpenAI/Gemini + <strong>ElevenLabs</strong>. Best for English &amp; Tamil. Sinhala real-time: <a href="/live" style="color:#93c5fd">/live</a>.</p>
+  </header>
+
+  <main>
+    <div class="center">
+  <div class="panel">
+    <p id="statusTitle">Ready</p>
+    <p id="statusDetail">Press Start to begin.</p>
+    <div class="steps">
+      <div class="step" id="step1">1. Speak</div>
+      <div class="step" id="step2">2. Done</div>
+      <div class="step" id="step3">3. Reply</div>
+    </div>
+    <div class="meter-wrap"><div id="volumeMeter"></div></div>
+    <p id="meterLabel">Microphone level</p>
+    <div id="orb" class="orb idle">🎤</div>
+  </div>
+
+  <label class="chk">
+    <input type="checkbox" id="autoSilence" />
+    Auto-send when I pause (experimental)
+  </label>
+
+  <button type="button" id="btnDone" disabled>✓ Done speaking — send to Nila</button>
+
+  <div class="controls">
+    <button type="button" id="btnStart">Start conversation</button>
+    <button type="button" id="btnStop">End conversation</button>
+  </div>
+
+  <div id="transcript"></div>
+
+    </div>
+
+    <aside>
+      <h2>Resources</h2>
+      <div id="resources">
+        <p class="empty-resources">Forms and offices from the knowledge base appear here after each answer.</p>
+      </div>
+    </aside>
+  </main>
+
+  <audio id="player"></audio>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const WELCOME =
+      "Hello! I'm Nila, your Sri Lanka government services assistant. " +
+      "Tell me what you need help with, then press done speaking when you finish.";
+
+    const SILENCE_MS = 1500;
+    const VOLUME_THRESHOLD = 0.02;
+
+    let history = [];
+    let sessionId = null;
+    let stream = null;
+    let audioCtx = null;
+    let analyser = null;
+    let mediaRecorder = null;
+    let chunks = [];
+    let active = false;
+    let processing = false;
+    let rafId = null;
+    let heardSpeech = false;
+    let silenceStart = null;
+
+    function api() { return $("apiBase").value.replace(/\/$/, ""); }
+
+    function setSteps(activeStep) {
+      [1, 2, 3].forEach((n) => {
+        const el = $(`step${n}`);
+        el.classList.remove("active", "done");
+        if (activeStep > 0 && n < activeStep) el.classList.add("done");
+        if (n === activeStep) el.classList.add("active");
+      });
+    }
+
+    function setStatus(title, detail, orbClass, orbEmoji) {
+      $("statusTitle").textContent = title;
+      $("statusDetail").textContent = detail;
+      const orb = $("orb");
+      orb.className = `orb ${orbClass}`;
+      orb.textContent = orbEmoji;
+    }
+
+    function renderResources(list) {
+      const box = $("resources");
+      if (!list || !list.length) {
+        box.innerHTML = '<p class="empty-resources">No resources this turn.</p>';
+        return;
+      }
+      box.innerHTML = list
+        .map(
+          (r) => `
+        <div class="resource">
+          <strong>${escapeHtml(r.label || r.type)}</strong>
+          ${escapeHtml(r.name)}
+          ${r.url ? `<br/><a href="${escapeAttr(r.url)}" target="_blank" rel="noopener">Open link</a>` : ""}
+        </div>`
+        )
+        .join("");
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function escapeAttr(s) {
+      return String(s).replace(/"/g, "&quot;");
+    }
+
+    function logLine(who, text) {
+      const div = document.createElement("div");
+      div.className = `line ${who}`;
+      const prefix = who === "you" ? "You" : who === "nila" ? "Nila" : "•";
+      div.textContent = `${prefix}: ${text}`;
+      $("transcript").appendChild(div);
+      $("transcript").scrollTop = $("transcript").scrollHeight;
+    }
+
+    function volumeLevel() {
+      if (!analyser) return 0;
+      const data = new Uint8Array(analyser.fftSize);
+      analyser.getByteTimeDomainData(data);
+      let peak = 0;
+      for (let i = 0; i < data.length; i++) {
+        const v = Math.abs(data[i] - 128) / 128;
+        if (v > peak) peak = v;
+      }
+      return peak;
+    }
+
+    function updateMeter() {
+      if (!active) return;
+      const v = volumeLevel();
+      $("volumeMeter").style.width = `${Math.min(100, v * 400)}%`;
+      if (processing) return;
+      if (stateIsListening() && v > VOLUME_THRESHOLD) {
+        $("meterLabel").textContent = "🔴 Hearing you — speak, then tap Done speaking";
+        heardSpeech = true;
+        silenceStart = null;
+      } else if (stateIsListening()) {
+        $("meterLabel").textContent = heardSpeech
+          ? "Waiting… tap Done speaking when finished"
+          : "Speak now — mic is active";
+      }
+    }
+
+    function stateIsListening() {
+      return $("btnDone").style.display === "block" && !processing;
+    }
+
+    function meterLoop() {
+      updateMeter();
+      if ($("autoSilence").checked && stateIsListening() && heardSpeech) {
+        const v = volumeLevel();
+        if (v <= VOLUME_THRESHOLD) {
+          if (!silenceStart) silenceStart = Date.now();
+          else if (Date.now() - silenceStart > SILENCE_MS) {
+            onDoneSpeaking();
+            return;
+          }
+        } else {
+          silenceStart = null;
+        }
+      }
+      rafId = requestAnimationFrame(meterLoop);
+    }
+
+    async function playTts(text, lang) {
+      const res = await fetch(`${api()}/api/avatar/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, language: lang || "en" }),
+      });
+      const data = await res.json();
+      if (!data.audio_base64) return;
+      const player = $("player");
+      player.src = `data:audio/mpeg;base64,${data.audio_base64}`;
+      await new Promise((resolve) => {
+        player.onended = resolve;
+        player.onerror = resolve;
+        player.play().catch(resolve);
+      });
+    }
+
+    function startRecording() {
+      chunks = [];
+      heardSpeech = false;
+      silenceStart = null;
+      if (mediaRecorder?.state === "inactive") {
+        mediaRecorder.start(300);
+      }
+    }
+
+    function onDoneSpeaking() {
+      if (processing || !active) return;
+      if (mediaRecorder?.state !== "recording") {
+        setStatus("Nothing recorded", "Speak first, then tap Done speaking.", "listen", "🎤");
+        return;
+      }
+      processing = true;
+      $("btnDone").disabled = true;
+      setSteps(2);
+      setStatus("Processing…", "Sending your voice to Nila…", "think", "⏳");
+      mediaRecorder.stop();
+    }
+
+    async function processTurn(blob) {
+      setStatus("Transcribing…", "Understanding what you said (Whisper)…", "think", "👂");
+      setSteps(2);
+
+      const form = new FormData();
+      form.append("audio", blob, "speech.webm");
+      form.append("language", $("language").value);
+      form.append("history", JSON.stringify(history));
+      form.append("voice_mode", "true");
+      if (sessionId) form.append("session_id", sessionId);
+
+      try {
+        setStatus("Thinking…", "Searching knowledge and preparing answer…", "think", "🧠");
+        const res = await fetch(`${api()}/api/voice/turn`, { method: "POST", body: form });
+        const data = await res.json();
+
+        if (!res.ok || data.error) {
+          logLine("sys", "Error: " + (data.error || res.status));
+          setStatus("Error", data.error || "Request failed", "idle", "⚠️");
+          return;
+        }
+
+        sessionId = data.session_id;
+        renderResources(data.resources || []);
+        logLine("you", data.transcript);
+        logLine("nila", data.reply);
+        history.push({ role: "user", content: data.transcript });
+        history.push({ role: "assistant", content: data.reply });
+
+        setSteps(3);
+        setStatus("Speaking…", "Nila is answering you…", "speak", "🔊");
+
+        if (data.audio_base64) {
+          const player = $("player");
+          player.src = `data:audio/mpeg;base64,${data.audio_base64}`;
+          await new Promise((resolve) => {
+            player.onended = resolve;
+            player.onerror = resolve;
+            player.play().catch(resolve);
+          });
+        }
+
+        beginListeningTurn();
+      } catch (e) {
+        logLine("sys", "Network: " + e.message);
+        setStatus("Error", e.message, "idle", "⚠️");
+      } finally {
+        processing = false;
+      }
+    }
+
+    function beginListeningTurn() {
+      if (!active) return;
+      setSteps(1);
+      setStatus(
+        "Your turn — speak now",
+        "Ask your question, then tap the red Done speaking button.",
+        "listen",
+        "🎤"
+      );
+      $("btnDone").style.display = "block";
+      $("btnDone").disabled = false;
+      startRecording();
+    }
+
+    async function startAgent() {
+      try {
+        setStatus("Starting…", "Requesting microphone access…", "think", "⏳");
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioCtx = new AudioContext();
+        await audioCtx.resume();
+        const source = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+
+        const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
+          : MediaRecorder.isTypeSupported("audio/webm")
+            ? "audio/webm"
+            : "";
+        mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+        mediaRecorder.onstop = async () => {
+          const blob = new Blob(chunks, { type: mime || "audio/webm" });
+          chunks = [];
+          if (blob.size < 500) {
+            processing = false;
+            logLine("sys", "Recording too short — please speak longer.");
+            beginListeningTurn();
+            return;
+          }
+          await processTurn(blob);
+        };
+
+        active = true;
+        $("btnStart").style.display = "none";
+        $("btnStop").style.display = "inline-block";
+        $("transcript").innerHTML = "";
+        renderResources([]);
+        history = [];
+        sessionId = null;
+
+        setStatus("Welcome", "Playing welcome message…", "speak", "👋");
+        logLine("nila", WELCOME);
+        setSteps(1);
+        await playTts(WELCOME, $("language").value === "auto" ? "en" : $("language").value);
+
+        meterLoop();
+        beginListeningTurn();
+      } catch (e) {
+        setStatus("Mic blocked", e.message, "idle", "🚫");
+        alert("Microphone is required:\n" + e.message);
+      }
+    }
+
+    function stopAgent() {
+      active = false;
+      processing = false;
+      cancelAnimationFrame(rafId);
+      $("player").pause();
+      if (mediaRecorder?.state === "recording") mediaRecorder.stop();
+      stream?.getTracks().forEach((t) => t.stop());
+      audioCtx?.close();
+      $("btnDone").style.display = "none";
+      $("btnStart").style.display = "inline-block";
+      $("btnStop").style.display = "none";
+      setSteps(0);
+      setStatus("Ended", "Press Start to talk again.", "idle", "🎤");
+      $("volumeMeter").style.width = "0%";
+      logLine("sys", "Conversation ended.");
+    }
+
+    $("btnStart").addEventListener("click", startAgent);
+    $("btnStop").addEventListener("click", stopAgent);
+    $("btnDone").addEventListener("click", onDoneSpeaking);
+  </script>
+</body>
+</html>

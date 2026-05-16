@@ -113,6 +113,30 @@ async def avatar_options():
     return JSONResponse(content={}, headers=CORS_HEADERS)
 
 
+@router.post("/tts")
+async def avatar_tts_preview(request: AvatarRequest):
+    """Return ElevenLabs audio only (for testing voice without Beyond Presence)."""
+    try:
+        voice_id = _voice_id_for_language(request.language)
+        async with httpx.AsyncClient() as client:
+            audio_bytes = await _elevenlabs_tts(client, request.text, voice_id)
+        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+        return JSONResponse(
+            content={
+                "audio_generated": True,
+                "audio_base64": audio_base64,
+                "content_type": "audio/mpeg",
+            },
+            headers=CORS_HEADERS,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"audio_generated": False, "error": str(exc)},
+            headers=CORS_HEADERS,
+        )
+
+
 @router.post("")
 async def avatar_endpoint(request: AvatarRequest):
     try:
