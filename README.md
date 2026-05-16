@@ -183,15 +183,15 @@ LANGUAGE plpgsql AS $$
 BEGIN
   RETURN QUERY
   SELECT
-    id,
-    content,
-    metadata,
-    source_url,
-    dept,
-    1 - (embedding <=> query_embedding) AS similarity
-  FROM documents
-  WHERE (filter_language IS NULL OR language = filter_language)
-  ORDER BY embedding <=> query_embedding
+    d.id,
+    d.content,
+    d.metadata,
+    d.source_url,
+    d.dept,
+    1 - (d.embedding <=> query_embedding) AS similarity
+  FROM documents d
+  WHERE (filter_language IS NULL OR d.language = filter_language)
+  ORDER BY d.embedding <=> query_embedding
   LIMIT match_count;
 END;
 $$;

@@ -3,7 +3,7 @@
 # -- CREATE TABLE documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), content text, metadata jsonb, embedding vector(1536), language text DEFAULT 'en', source_url text, dept text);
 # -- CREATE OR REPLACE FUNCTION match_documents(query_embedding vector(1536), match_count int, filter_language text DEFAULT NULL)
 # -- RETURNS TABLE(id uuid, content text, metadata jsonb, source_url text, dept text, similarity float)
-# -- LANGUAGE plpgsql AS $$ BEGIN RETURN QUERY SELECT id, content, metadata, source_url, dept, 1-(embedding<=>query_embedding) AS similarity FROM documents WHERE (filter_language IS NULL OR language=filter_language) ORDER BY embedding<=>query_embedding LIMIT match_count; END; $$;
+# -- LANGUAGE plpgsql AS $$ BEGIN RETURN QUERY SELECT d.id, d.content, d.metadata, d.source_url, d.dept, 1-(d.embedding<=>query_embedding) AS similarity FROM documents d WHERE (filter_language IS NULL OR d.language=filter_language) ORDER BY d.embedding<=>query_embedding LIMIT match_count; END; $$;
 
 import asyncio
 import os

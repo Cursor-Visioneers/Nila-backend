@@ -13,7 +13,7 @@ from lib.rag import upsert_document
 router = APIRouter()
 
 OPENAI_MODEL = "gpt-4o"
-GEMINI_MODEL = "gemini-1.5-pro"
+GEMINI_MODEL = "gemini-3.1-flash-lite"
 SI_HINT_PATTERN = re.compile(r"(?:^|[/_\-.])(si)(?:$|[/_\-.])|\(si\)", re.IGNORECASE)
 
 
