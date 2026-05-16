@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+python-dotenv
+openai
+google-generativeai
+supabase
+httpx
+langdetect
+pydantic
+python-multipart
+sse-starlette
