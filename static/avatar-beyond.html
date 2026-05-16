@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nila — Beyond Presence Avatar Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.9.1/dist/livekit-client.umd.min.js"></script>
+  <script src="/static/js/livekit-bey.js"></script>
+  <style>
+    :root {
+      --bg: #0a0e14;
+      --card: #141c28;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #a855f7;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --err: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: radial-gradient(ellipse at top, #1a1030 0%, var(--bg) 55%);
+      color: var(--text);
+      margin: 0;
+      padding: 1.25rem;
+      line-height: 1.5;
+    }
+    h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+    .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.25rem; }
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 1.15fr 260px;
+      gap: 1rem;
+      max-width: 1200px;
+    }
+    @media (max-width: 1000px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 { font-size: 0.95rem; margin: 0 0 0.75rem; color: #d8b4fe; }
+    label { display: block; font-size: 0.75rem; color: var(--muted); margin-bottom: 0.3rem; }
+    input, select, textarea {
+      width: 100%;
+      padding: 0.55rem 0.7rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #0a0e14;
+      color: var(--text);
+      font-size: 0.9rem;
+    }
+    textarea { min-height: 88px; resize: vertical; }
+    button {
+      padding: 0.55rem 0.9rem;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-secondary { background: #1f2937; color: var(--text); border: 1px solid var(--border); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
+    .checks { list-style: none; padding: 0; margin: 0; font-size: 0.85rem; }
+    .checks li { padding: 0.25rem 0; }
+    .checks .ok { color: var(--ok); }
+    .checks .bad { color: var(--err); }
+    .status { font-size: 0.85rem; margin-top: 0.5rem; }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--err); }
+    .status.muted { color: var(--muted); }
+    .status.warn { color: var(--warn); }
+    #videoWrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      background: #000;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    #avatarVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: #111;
+    }
+    #streamFrame {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: none;
+    }
+    .placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 0.9rem;
+      text-align: center;
+      padding: 1rem;
+    }
+    pre {
+      background: #0a0e14;
+      padding: 0.75rem;
+      border-radius: 8px;
+      overflow: auto;
+      font-size: 0.72rem;
+      max-height: 320px;
+      margin: 0;
+    }
+    a { color: #c4b5fd; word-break: break-all; }
+    audio { width: 100%; margin-top: 0.5rem; }
+    .resource {
+      font-size: 0.82rem;
+      padding: 0.55rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+      background: #0a0e14;
+    }
+    .resource strong { display: block; color: #d8b4fe; font-size: 0.7rem; margin-bottom: 0.2rem; }
+    .empty-resources { font-size: 0.8rem; color: var(--muted); }
+    .reply-box {
+      font-size: 0.85rem;
+      padding: 0.65rem;
+      background: #0a0e14;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      margin-top: 0.5rem;
+      max-height: 120px;
+      overflow: auto;
+    }
+    details { font-size: 0.8rem; color: var(--muted); margin-top: 0.75rem; }
+  </style>
+</head>
+<body>
+  <h1>Nila · Beyond Presence avatar test</h1>
+  <p class="sub">
+  Live avatar with <strong>Supabase RAG</strong> (same backend as <a href="/live-eleven">/live-eleven</a>).
+  Click <strong>Connect</strong> → WebSocket + LiveKit + mic. Requires <code>NILA_PUBLIC_BASE_URL</code> (ngrok in dev).
+  Manual mode skips RAG. <a href="/test">/test</a> · <a href="/live-eleven">/live-eleven</a>
+  </p>
+
+  <div class="layout">
+    <div>
+      <div class="card">
+        <label for="apiBase">API base URL</label>
+        <input id="apiBase" type="url" value="" />
+      </div>
+
+      <div class="card">
+        <h2>Backend config</h2>
+        <ul id="configChecks" class="checks">
+          <li class="muted">Loading…</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>Ask with RAG (recommended)</h2>
+        <label for="question">Your question</label>
+        <textarea id="question" placeholder="e.g. How do I register a birth in Sri Lanka?">How do I register a birth in Sri Lanka?</textarea>
+        <label for="text" style="display:none">Text for avatar to speak</label>
+        <textarea id="text" style="display:none">Hello! I am Nila.</textarea>
+        <label for="language" style="margin-top:0.6rem">Language</label>
+        <select id="language">
+          <option value="en">English</option>
+          <option value="si">Sinhala</option>
+          <option value="ta">Tamil</option>
+          <option value="auto">Auto</option>
+        </select>
+        <div class="row">
+          <button type="button" class="btn-primary" id="btnAsk">Ask Nila (Supabase RAG)</button>
+        </div>
+        <div id="replyBox" class="reply-box" style="display:none"></div>
+        <details>
+          <summary>Manual test (no RAG)</summary>
+          <label for="textManual" style="margin-top:0.5rem">Fixed text</label>
+          <textarea id="textManual" style="min-height:56px">Hello! I am Nila.</textarea>
+          <div class="row">
+            <button type="button" class="btn-secondary" id="btnTts">Voice only</button>
+            <button type="button" class="btn-secondary" id="btnAvatar">Avatar only</button>
+          </div>
+        </details>
+        <p id="actionStatus" class="status muted">Ready.</p>
+        <audio id="ttsAudio" controls style="display:none"></audio>
+      </div>
+
+      <div class="card">
+        <h2>Raw response</h2>
+        <pre id="log">{}</pre>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>Avatar video</h2>
+        <div id="videoWrap">
+          <div id="placeholder" class="placeholder">Run “Start avatar” to load the Beyond Presence stream.</div>
+          <video id="avatarVideo" autoplay playsinline></video>
+          <iframe id="streamFrame" title="Beyond Presence" allow="camera; microphone; autoplay; fullscreen"></iframe>
+        </div>
+        <p id="streamStatus" class="status muted" style="margin-top:0.6rem">No stream yet.</p>
+        <p id="streamLinkWrap" style="display:none;margin-top:0.5rem;font-size:0.85rem">
+          Stream URL: <a id="streamLink" href="#" target="_blank" rel="noopener"></a>
+        </p>
+        <div class="row">
+          <button type="button" class="btn-primary" id="btnLiveTalk">Connect (mic + avatar)</button>
+          <button type="button" class="btn-secondary" id="btnDisconnectLive" style="display:none">Disconnect</button>
+          <button type="button" class="btn-secondary" id="btnDisconnect" disabled>Disconnect stream</button>
+          <button type="button" class="btn-secondary" id="btnOpenTab" disabled>Open URL in tab</button>
+        </div>
+      </div>
+    </div>
+
+    <aside>
+      <div class="card">
+        <h2>Resources</h2>
+        <div id="resources">
+          <p class="empty-resources">Forms and offices appear here after you ask a government question.</p>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let livekitRoom = null;
+    let liveWs = null;
+    let lastStreamUrl = null;
+    let sessionId = localStorage.getItem("nila_avatar_session") || null;
+
+    function apiBase() {
+      const v = $("apiBase").value.trim();
+      if (v) return v.replace(/\/$/, "");
+      return `${location.protocol}//${location.host}`;
+    }
+
+    $("apiBase").value = `${location.protocol}//${location.host}`;
+
+    function manualPayload() {
+      const text = ($("textManual")?.value || $("text")?.value || "").trim();
+      return { text, language: $("language").value };
+    }
+
+    function askPayload() {
+      return {
+        message: $("question").value.trim(),
+        language: $("language").value,
+        history: [],
+        session_id: sessionId,
+      };
+    }
+
+    function renderResources(list) {
+      const box = $("resources");
+      if (!list || !list.length) {
+        box.innerHTML =
+          '<p class="empty-resources">No resources this turn.</p>';
+        return;
+      }
+      box.innerHTML = list
+        .map(
+          (r) => `
+        <div class="resource">
+          <strong>${escapeHtml(r.label || r.type)}</strong>
+          ${escapeHtml(r.name)}
+          ${r.url ? `<br/><a href="${escapeAttr(r.url)}" target="_blank" rel="noopener">Open</a>` : ""}
+        </div>`
+        )
+        .join("");
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function escapeAttr(s) {
+      return String(s).replace(/"/g, "&quot;");
+    }
+
+    function setLog(data) {
+      $("log").textContent = JSON.stringify(data, null, 2);
+    }
+
+    function setAction(msg, kind) {
+      $("actionStatus").textContent = msg;
+      $("actionStatus").className = `status ${kind || "muted"}`;
+    }
+
+    function setStream(msg, kind) {
+      $("streamStatus").textContent = msg;
+      $("streamStatus").className = `status ${kind || "muted"}`;
+    }
+
+    async function fetchJson(path, options) {
+      const res = await fetch(`${apiBase()}${path}`, options);
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    }
+
+    function renderConfigChecks(data) {
+      const items = [
+        ["OpenAI (RAG)", data.openai_key],
+        ["Supabase docs", data.supabase_ok],
+        ["ElevenLabs API key", data.elevenlabs_key],
+        ["VOICE_ID_EN", data.voice_id_en],
+        ["Beyond Presence API", data.beyond_presence_api_ok],
+        ["BEY_AGENT_ID", data.agent_id],
+      ];
+      if (data.beyond_presence_api_base) {
+        items.push(["API host", true]);
+      }
+      if (data.use_legacy_stream) {
+        items.push(["Legacy /v1/stream mode", true]);
+      }
+      if (data.beyond_presence_message && !data.beyond_presence_api_ok) {
+        setAction(`Beyond Presence: ${data.beyond_presence_message}`, "warn");
+      }
+      $("configChecks").innerHTML = items
+        .map(
+          ([label, ok]) =>
+            `<li class="${ok ? "ok" : "bad"}">${ok ? "✓" : "✗"} ${label}</li>`
+        )
+        .join("");
+      if (!data.ready) {
+        setAction("Fix missing .env values on the backend, then refresh.", "warn");
+      }
+    }
+
+    async function loadConfig() {
+      try {
+        const { data } = await fetchJson("/api/avatar/status");
+        renderConfigChecks(data);
+        setLog({ endpoint: "/api/avatar/status", ...data });
+      } catch (e) {
+        $("configChecks").innerHTML = `<li class="bad">✗ ${e.message}</li>`;
+      }
+    }
+
+    function findLiveKitCreds(provider) {
+      if (!provider || typeof provider !== "object") return null;
+      const url =
+        provider.livekit_url ||
+        provider.livekitUrl ||
+        provider.url ||
+        provider.room_url;
+      const token =
+        provider.livekit_token ||
+        provider.livekitToken ||
+        provider.token ||
+        provider.access_token ||
+        provider.accessToken;
+      if (url && token) return { url, token };
+      return null;
+    }
+
+    async function disconnectStream(clearUrl = true) {
+      if (livekitRoom) {
+        try {
+          await livekitRoom.disconnect();
+        } catch (_) {}
+        livekitRoom = null;
+      }
+      $("avatarVideo").srcObject = null;
+      $("avatarVideo").style.display = "none";
+      $("streamFrame").style.display = "none";
+      $("streamFrame").src = "about:blank";
+      $("placeholder").style.display = "flex";
+      $("btnDisconnect").disabled = true;
+      if (clearUrl) {
+        lastStreamUrl = null;
+        $("btnOpenTab").disabled = true;
+        $("streamLinkWrap").style.display = "none";
+      }
+    }
+
+    async function connectLiveKit(url, token) {
+      if (!window.NilaLiveKitBey) {
+        throw new Error("livekit-bey.js failed to load");
+      }
+      setAction("Requesting microphone access…", "muted");
+      const { room, LK } = await window.NilaLiveKitBey.connectWithMicrophone(url, token);
+      livekitRoom = room;
+      window.NilaLiveKitBey.attachAgentTracks(room, LK, $("avatarVideo"));
+      $("avatarVideo").style.display = "block";
+      $("placeholder").style.display = "none";
+      $("btnDisconnect").disabled = false;
+      setAction("Microphone on — speak to the avatar.", "ok");
+      return room;
+    }
+
+    async function showStream(streamUrl, provider, audioBase64) {
+      lastStreamUrl = streamUrl;
+      $("streamLink").href = streamUrl;
+      $("streamLink").textContent = streamUrl;
+      $("streamLinkWrap").style.display = "block";
+      $("btnOpenTab").disabled = false;
+      $("btnDisconnect").disabled = false;
+
+      await disconnectStream(false);
+      lastStreamUrl = streamUrl;
+
+      if (audioBase64) {
+        $("ttsAudio").src = `data:audio/mpeg;base64,${audioBase64}`;
+        $("ttsAudio").style.display = "block";
+        $("ttsAudio").play().catch(() => {});
+      }
+
+      const lk = findLiveKitCreds(provider);
+      if (lk) {
+        setStream(
+          "LiveKit avatar connected — ElevenLabs voice plays from the audio bar below.",
+          "ok"
+        );
+        await connectLiveKit(lk.url, lk.token);
+        return;
+      }
+
+      const lower = streamUrl.toLowerCase();
+      if (lower.includes("livekit") || lower.startsWith("wss://")) {
+        setStream(
+          "Stream URL looks like WebRTC/LiveKit but no token in response. Open URL or check provider JSON.",
+          "warn"
+        );
+        return;
+      }
+
+      $("placeholder").style.display = "none";
+      $("streamFrame").src = streamUrl;
+      $("streamFrame").style.display = "block";
+      setStream("Loaded stream URL in iframe (if provider returns a viewer page).", "ok");
+    }
+
+    $("btnDisconnect").addEventListener("click", () => {
+      disconnectStream();
+      setStream("Disconnected.", "muted");
+    });
+
+    $("btnOpenTab").addEventListener("click", () => {
+      if (lastStreamUrl) window.open(lastStreamUrl, "_blank", "noopener");
+    });
+
+    $("btnTts").addEventListener("click", async () => {
+      const btn = $("btnTts");
+      btn.disabled = true;
+      setAction("POST /api/avatar/tts …", "muted");
+      $("ttsAudio").style.display = "none";
+
+      try {
+        const { ok, status, data } = await fetchJson("/api/avatar/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(manualPayload()),
+        });
+        setLog({ endpoint: "/api/avatar/tts", status, ...data });
+
+        if (ok && data.audio_base64) {
+          $("ttsAudio").src = `data:audio/mpeg;base64,${data.audio_base64}`;
+          $("ttsAudio").style.display = "block";
+          $("ttsAudio").play().catch(() => {});
+          setAction("Voice OK (ElevenLabs).", "ok");
+        } else {
+          setAction(data.error || `TTS failed (HTTP ${status})`, "err");
+        }
+      } catch (e) {
+        setAction(e.message, "err");
+        setLog({ error: e.message });
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    $("btnAvatar").addEventListener("click", async () => {
+      const btn = $("btnAvatar");
+      btn.disabled = true;
+      setAction("POST /api/avatar (TTS + Beyond Presence)…", "muted");
+      setStream("Waiting for stream…", "muted");
+
+      try {
+        await disconnectStream();
+        const { ok, status, data } = await fetchJson("/api/avatar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(manualPayload()),
+        });
+        setLog({ endpoint: "/api/avatar", status, ...data });
+
+        if (ok && data.audio_generated && data.stream_url) {
+          setAction("Stream URL received.", "ok");
+          await showStream(data.stream_url, data.provider, data.audio_base64);
+        } else {
+          setAction(data.error || `Avatar failed (HTTP ${status})`, "err");
+          setStream(data.error || "Request failed.", "err");
+        }
+      } catch (e) {
+        setAction(e.message, "err");
+        setStream(e.message, "err");
+        setLog({ error: e.message });
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    $("btnAsk").addEventListener("click", async () => {
+      const btn = $("btnAsk");
+      const q = $("question").value.trim();
+      if (!q) {
+        setAction("Enter a question first.", "warn");
+        return;
+      }
+      btn.disabled = true;
+      setAction("Loading from Supabase…", "muted");
+      renderResources([]);
+
+      if (liveWs && liveWs.readyState === WebSocket.OPEN) {
+        liveWs.send(JSON.stringify({ type: "text", text: q }));
+        setAction("RAG query sent — watch resources panel and answer below.", "ok");
+        btn.disabled = false;
+        return;
+      }
+
+      try {
+        const { ok, status, data } = await fetchJson("/api/avatar/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(askPayload()),
+        });
+        setLog({ endpoint: "/api/avatar/ask", status, ...data });
+
+        if (data.session_id) {
+          sessionId = data.session_id;
+          localStorage.setItem("nila_avatar_session", sessionId);
+        }
+
+        if (data.reply) {
+          $("replyBox").textContent = data.reply;
+          $("replyBox").style.display = "block";
+        }
+
+        renderResources(data.resources || []);
+
+        if (ok && data.audio_generated && data.stream_url) {
+          setAction("Answer ready — playing avatar.", "ok");
+          await showStream(data.stream_url, data.provider, data.audio_base64);
+        } else {
+          setAction(data.error || `Failed (HTTP ${status})`, "err");
+          setStream(data.error || "Failed.", "err");
+        }
+      } catch (e) {
+        setAction(e.message, "err");
+        setStream(e.message, "err");
+        setLog({ error: e.message });
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    async function runSetup() {
+      try {
+        const { data } = await fetchJson("/api/avatar/setup", { method: "POST" });
+        if (data.message) setAction(data.message, data.env_agent_valid ? "ok" : "warn");
+        if (data.embed_url) {
+          $("streamFrame").src = data.embed_url;
+        }
+        setLog({ endpoint: "/api/avatar/setup", ...data });
+        return data;
+      } catch (e) {
+        setAction(e.message, "err");
+        return null;
+      }
+    }
+
+    function liveWsUrl() {
+      const base = apiBase();
+      const u = new URL(base || `${location.protocol}//${location.host}`);
+      u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+      return `${u.origin}/api/avatar/live/ws`;
+    }
+
+    function handleLiveWsMessage(msg) {
+      if (msg.type === "ready") {
+        setLog({ endpoint: "/api/avatar/live/ws", ...msg });
+        const ragNote = msg.voice_uses_supabase_rag
+          ? "Voice answers use Supabase RAG."
+          : "Resources from Supabase when you ask; avatar voice uses Bey (local).";
+        connectLiveKit(msg.livekit_url, msg.livekit_token)
+          .then(() => {
+            setStream(`Live — ${ragNote}`, "ok");
+            $("btnDisconnectLive").style.display = "inline-block";
+          })
+          .catch((e) => {
+            const text = window.NilaLiveKitBey?.micErrorMessage?.(e) || e.message;
+            setStream(text, "err");
+            setAction(text, "err");
+          });
+        return;
+      }
+      if (msg.type === "status") {
+        setAction(msg.message, "muted");
+        return;
+      }
+      if (msg.type === "resources") {
+        renderResources(msg.resources || []);
+        return;
+      }
+      if (msg.type === "rag_search" || msg.type === "rag_applied") {
+        setAction(
+          `Supabase RAG: ${msg.resource_count} resource(s) for “${msg.query}”.`,
+          "ok"
+        );
+        return;
+      }
+      if (msg.type === "text") {
+        if (msg.role === "user") {
+          $("replyBox").textContent = `You: ${msg.text}`;
+        } else {
+          $("replyBox").textContent = msg.text;
+          $("replyBox").style.display = "block";
+        }
+        return;
+      }
+      if (msg.type === "error") {
+        setStream(msg.message, "err");
+        setAction(msg.message, "err");
+      }
+    }
+
+    async function startLiveTalk() {
+      const btn = $("btnLiveTalk");
+      btn.disabled = true;
+      setStream("Connecting…", "muted");
+      setAction("Allow microphone when prompted.", "muted");
+      try {
+        await disconnectStream();
+        if (liveWs) {
+          liveWs.close();
+          liveWs = null;
+        }
+        const { data: status } = await fetchJson("/api/avatar/live/status");
+        if (!status.ready) {
+          setStream(status.message || "Backend not ready.", "err");
+          setAction(status.message || "Check Beyond Presence API key.", "err");
+          return;
+        }
+        if (status.local_mode) {
+          setAction(status.message || "Local mode — no ngrok required.", "warn");
+        }
+        liveWs = new WebSocket(liveWsUrl());
+        liveWs.onopen = () => setAction("WebSocket open — starting avatar call…", "muted");
+        liveWs.onmessage = (ev) => {
+          try {
+            handleLiveWsMessage(JSON.parse(ev.data));
+          } catch (_) {}
+        };
+        liveWs.onerror = () => setStream("WebSocket error", "err");
+        liveWs.onclose = () => {
+          $("btnDisconnectLive").style.display = "none";
+          setStream("Disconnected.", "muted");
+        };
+      } catch (e) {
+        setStream(e.message, "err");
+        setAction(e.message, "err");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function disconnectLive() {
+      if (liveWs) {
+        liveWs.close();
+        liveWs = null;
+      }
+      await disconnectStream();
+      $("btnDisconnectLive").style.display = "none";
+    }
+
+    $("btnLiveTalk").addEventListener("click", startLiveTalk);
+    $("btnDisconnectLive").addEventListener("click", disconnectLive);
+
+    (async () => {
+      await loadConfig();
+      const { data: live } = await fetchJson("/api/avatar/live/status");
+      if (live.message) setAction(live.message, live.ready ? "ok" : "warn");
+      setStream(
+        'Connect, then ask a government question — resources come from Supabase. ' +
+          'Check GET /api/avatar/live/status for voice_uses_supabase_rag.',
+        "muted"
+      );
+    })();
+  </script>
+</body>
+</html>
