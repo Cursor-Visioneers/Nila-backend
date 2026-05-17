@@ -39,6 +39,10 @@
       if (!micOn) {
         throw new Error("Microphone could not be enabled.");
       }
+      const pubs = room.localParticipant.audioTrackPublications;
+      if (pubs && pubs.size < 1) {
+        throw new Error("Microphone track did not publish — try Connect again.");
+      }
     } catch (err) {
       await room.disconnect();
       throw new Error(micErrorMessage(err));
@@ -48,25 +52,50 @@
       try {
         await room.startAudio();
       } catch (_) {
-        /* autoplay policy — video element may still play after gesture */
+        /* autoplay policy — Connect click counts as gesture */
       }
     }
 
     return { room, LK };
   }
 
-  function attachAgentTracks(room, LK, mediaEl) {
-    const attach = (track) => {
+  function attachAgentTracks(room, LK, mediaEl, audioEl) {
+    const videoTarget = mediaEl;
+    const audioTarget = audioEl || mediaEl;
+
+    const attach = (track, participant) => {
       if (!track || (track.kind !== "video" && track.kind !== "audio")) return;
-      track.attach(mediaEl);
-      mediaEl.muted = false;
+      if (participant?.isLocal) return;
+      const target = track.kind === "video" ? videoTarget : audioTarget;
+      track.attach(target);
+      if (target.muted !== undefined) target.muted = false;
+      if (track.kind === "video" && videoTarget?.style) {
+        videoTarget.style.display = "block";
+        videoTarget.playsInline = true;
+        videoTarget.play?.().catch(() => {});
+      }
+      if (track.kind === "audio" && typeof room.startAudio === "function") {
+        room.startAudio().catch(() => {});
+      }
     };
 
-    room.on(LK.RoomEvent.TrackSubscribed, (track) => attach(track));
+    room.on(LK.RoomEvent.TrackSubscribed, (track, _pub, participant) =>
+      attach(track, participant)
+    );
+
+    room.on(LK.RoomEvent.TrackPublished, (pub, participant) => {
+      if (pub.track) attach(pub.track, participant);
+    });
+
+    room.on(LK.RoomEvent.ParticipantConnected, (participant) => {
+      participant.trackPublications.forEach((pub) => {
+        if (pub.track) attach(pub.track, participant);
+      });
+    });
 
     room.remoteParticipants.forEach((participant) => {
       participant.trackPublications.forEach((pub) => {
-        if (pub.track) attach(pub.track);
+        if (pub.track) attach(pub.track, participant);
       });
     });
   }

@@ -6,7 +6,11 @@ from lib.gemini_client import generate_sinhala_response
 from lib.language_detector import detect_language
 from lib.openai_client import generate_response
 from lib.rag import search_knowledge
-from lib.rag_tools import build_context, resources_from_search_results
+from lib.rag_tools import (
+    build_context,
+    resources_from_search_results,
+    select_top_resources,
+)
 from lib.resource_extractor import extract_resources, strip_resources_from_reply
 
 SUPPORTED_LANGUAGES = {"en", "si", "ta"}
@@ -87,15 +91,9 @@ async def run_chat(
         )
         engine = "openai"
 
-    resources = extract_resources(raw_reply)
-    kb_resources = resources_from_search_results(results)
-    if kb_resources:
-        seen = {(r.get("type"), r.get("name"), r.get("url")) for r in resources}
-        for item in kb_resources:
-            key = (item.get("type"), item.get("name"), item.get("url"))
-            if key not in seen:
-                seen.add(key)
-                resources.append(item)
+    kb_resources = resources_from_search_results(results, query=message)
+    llm_resources = extract_resources(raw_reply)
+    resources = select_top_resources(kb_resources + llm_resources, message)
 
     reply = finalize_reply(raw_reply, resolved, resources, voice_mode=voice_mode)
 

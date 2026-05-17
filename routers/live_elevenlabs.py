@@ -219,7 +219,7 @@ async def elevenlabs_live_websocket(websocket: WebSocket):
                     answer = (chat.get("reply") or "").strip()
                     found = chat.get("resources") or []
                     await send_resources(
-                        websocket, resource_panel, found, replace=True
+                        websocket, resource_panel, found, replace=True, query=q
                     )
                     await websocket.send_json(
                         {

@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nila — Avatar Live (Gemini + Bey)</title>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.9.1/dist/livekit-client.umd.min.js"></script>
+  <script src="/static/js/livekit-gemini.js"></script>
+  <script src="/static/js/gemini-playback.js"></script>
+  <style>
+    :root {
+      --bg: #04120f;
+      --panel: #0f1f1a;
+      --border: #1e3a32;
+      --text: #ecfdf5;
+      --muted: #86efac;
+      --live: #10b981;
+      --on: #34d399;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      height: 100vh;
+      font-family: system-ui, sans-serif;
+      background: radial-gradient(ellipse at top, #064e3b 0%, var(--bg) 55%);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      background: var(--panel);
+    }
+    header h1 { margin: 0; font-size: 1rem; flex: 1; }
+    header input {
+      padding: 0.35rem 0.5rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      width: 220px;
+    }
+    header a { font-size: 0.75rem; color: #6ee7b7; }
+    main { flex: 1; display: grid; grid-template-columns: 1fr 300px; min-height: 0; }
+    @media (max-width: 860px) { main { grid-template-columns: 1fr; } aside { display: none; } }
+    .center {
+      padding: 1rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .status-panel {
+      width: 100%;
+      max-width: 520px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1rem;
+    }
+    #status { font-size: 1rem; font-weight: 600; margin: 0 0 0.25rem; }
+    #detail { font-size: 0.85rem; color: var(--muted); margin: 0; min-height: 2rem; }
+    .badge {
+      font-size: 0.7rem;
+      padding: 0.2rem 0.45rem;
+      border-radius: 4px;
+      background: #065f46;
+      color: #a7f3d0;
+    }
+    .avatar-wrap {
+      position: relative;
+      width: 100%;
+      max-width: 520px;
+      aspect-ratio: 16 / 10;
+      background: #022c22;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      margin: 0.75rem 0;
+    }
+    #avatarEmbed {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: none;
+      z-index: 1;
+      background: #000;
+    }
+    #avatarVideo {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: none;
+      background: transparent;
+    }
+    #avatarPlaceholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-align: center;
+      padding: 1rem;
+    }
+    .orb {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      background: #134e4a;
+    }
+    .orb.live { background: var(--live); animation: pulse 1s infinite; }
+    @keyframes pulse { 50% { transform: scale(1.06); } }
+    .meter-wrap {
+      height: 6px;
+      background: #022c22;
+      border-radius: 3px;
+      margin-top: 0.5rem;
+      overflow: hidden;
+    }
+    #volumeMeter { height: 100%; width: 0%; background: var(--live); transition: width 0.05s; }
+    button {
+      padding: 0.65rem 1.1rem;
+      border: none;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #btnConnect { background: var(--live); color: #042f2e; }
+    #btnDisconnect { background: #374151; color: #fff; display: none; }
+    .transcript {
+      width: 100%;
+      max-width: 520px;
+      margin-top: 0.75rem;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #022c22;
+      font-size: 0.85rem;
+      line-height: 1.45;
+    }
+    .transcript .label {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.2rem;
+    }
+    .transcript .user-line { color: #a7f3d0; min-height: 1.2em; }
+    .transcript .model-line { color: #fef3c7; min-height: 1.2em; margin-top: 0.5rem; }
+    #log {
+      width: 100%;
+      max-width: 520px;
+      max-height: 120px;
+      overflow-y: auto;
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: 0.5rem;
+    }
+    aside {
+      border-left: 1px solid var(--border);
+      background: var(--panel);
+      padding: 0.75rem;
+      overflow-y: auto;
+    }
+    aside h2 {
+      font-size: 0.85rem;
+      margin: 0 0 0.5rem;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .resource {
+      font-size: 0.82rem;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+      background: #022c22;
+    }
+    .resource strong { display: block; color: #6ee7b7; font-size: 0.72rem; }
+    .resource a { color: #93c5fd; }
+    .empty-resources { font-size: 0.8rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Nila · Gemini + Beyond Presence</h1>
+    <span class="badge">EN/SI/TA · Bey face</span>
+    <a href="/avatar">Bey-only live →</a>
+    <input id="apiBase" value="" />
+    <button type="button" id="btnConnect">Connect</button>
+    <button type="button" id="btnDisconnect">Disconnect</button>
+  </header>
+
+  <main>
+    <div class="center">
+      <div class="status-panel">
+        <p id="status">Offline</p>
+        <p id="detail">Checking backend…</p>
+        <div class="meter-wrap"><div id="volumeMeter"></div></div>
+      </div>
+      <div class="avatar-wrap">
+        <iframe id="avatarEmbed" title="Beyond Presence avatar" allow="camera; microphone; autoplay; fullscreen"></iframe>
+        <video id="avatarVideo" playsinline autoplay></video>
+        <div id="avatarPlaceholder">
+          <div id="orb" class="orb">🎙️</div>
+          <span>Avatar video appears after Beyond Presence connects</span>
+          <span style="font-size:0.75rem;margin-top:0.35rem;opacity:0.85">Use headphones</span>
+        </div>
+      </div>
+      <div class="transcript">
+        <div class="label">You said</div>
+        <div id="userLine" class="user-line">—</div>
+        <div class="label">Nila says</div>
+        <div id="modelLine" class="model-line">—</div>
+      </div>
+      <div id="log"></div>
+    </div>
+    <aside>
+      <h2>Resources</h2>
+      <div id="resources"><p class="empty-resources">Forms, offices, and laws (max 3).</p></div>
+    </aside>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let ws = null;
+    let micStream = null;
+    let audioCtx = null;
+    let processor = null;
+    let livekitRoom = null;
+    let geminiPublisher = null;
+    let useLiveKitAudio = false;
+    let livekitConnecting = false;
+    let videoTrackSeen = false;
+    let livekitRetryTimer = null;
+    let videoMode = "agent";
+    let embedUrl = null;
+    let greeted = false;
+    let micSafetyTimer = null;
+    let micStarted = false;
+    let userLineText = "";
+    let modelLineText = "";
+
+    function setMicLive(live) {
+      $("orb").className = live ? "orb live" : "orb";
+      $("detail").dataset.listening = live ? "1" : "0";
+    }
+
+    function showBeyEmbed(url) {
+      if (!url) return;
+      embedUrl = url;
+      const frame = $("avatarEmbed");
+      frame.src = url;
+      frame.style.display = "block";
+      $("avatarPlaceholder").style.display = "none";
+      log("Beyond Presence avatar embed loaded.");
+    }
+
+    function api() { return $("apiBase").value.replace(/\/$/, ""); }
+    function wsUrl() { return api().replace(/^http/, "ws") + "/api/avatar/live-gemini/ws"; }
+
+    function log(msg) {
+      const p = document.createElement("p");
+      p.textContent = msg;
+      $("log").appendChild(p);
+      $("log").scrollTop = $("log").scrollHeight;
+    }
+
+    function renderResources(list) {
+      const box = $("resources");
+      if (!list || !list.length) {
+        box.innerHTML = '<p class="empty-resources">No resources for this turn.</p>';
+        return;
+      }
+      box.innerHTML = list.map((r) => `
+        <div class="resource">
+          <strong>${escapeHtml(r.label || r.type)}</strong>
+          ${escapeHtml(r.name)}
+          ${r.url ? `<br/><a href="${escapeAttr(r.url)}" target="_blank" rel="noopener">Open</a>` : ""}
+        </div>`).join("");
+    }
+
+    function escapeHtml(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+    function escapeAttr(s) { return String(s).replace(/"/g,"&quot;"); }
+
+    const MIC_TARGET_RATE = 16000;
+
+    function resampleFloat32(input, fromRate, toRate) {
+      if (fromRate === toRate) return input;
+      const ratio = fromRate / toRate;
+      const outLen = Math.max(1, Math.round(input.length / ratio));
+      const out = new Float32Array(outLen);
+      for (let i = 0; i < outLen; i++) {
+        const src = i * ratio;
+        const i0 = Math.floor(src);
+        const i1 = Math.min(i0 + 1, input.length - 1);
+        const t = src - i0;
+        out[i] = input[i0] * (1 - t) + input[i1] * t;
+      }
+      return out;
+    }
+
+    function floatTo16BitPCM(float32) {
+      const buf = new Int16Array(float32.length);
+      for (let i = 0; i < float32.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32[i]));
+        buf[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      return buf;
+    }
+
+    function arrayBufferToBase64(buffer) {
+      let binary = "";
+      const bytes = new Uint8Array(buffer);
+      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    }
+
+    function updateMeter() {
+      const analyser = audioCtx?._analyser;
+      if (!analyser) return;
+      const data = new Uint8Array(analyser.fftSize);
+      analyser.getByteTimeDomainData(data);
+      let peak = 0;
+      for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i] - 128) / 128);
+      $("volumeMeter").style.width = `${Math.min(100, peak * 400)}%`;
+    }
+
+    async function disconnectLiveKit() {
+      if (geminiPublisher) {
+        try { await geminiPublisher.close(); } catch (_) {}
+        geminiPublisher = null;
+      }
+      if (livekitRoom) {
+        try { await livekitRoom.disconnect(); } catch (_) {}
+        livekitRoom = null;
+      }
+      useLiveKitAudio = false;
+      $("avatarVideo").style.display = "none";
+      $("avatarVideo").srcObject = null;
+      $("avatarEmbed").style.display = "none";
+      $("avatarEmbed").src = "";
+      $("avatarPlaceholder").style.display = "flex";
+    }
+
+    async function connectLiveKit(msg) {
+      if (!window.NilaLiveKitGemini) {
+        throw new Error("livekit-gemini.js failed to load");
+      }
+      const url = msg.livekit_url;
+      const token = msg.livekit_token;
+      if (!url || !token) {
+        throw new Error("Missing livekit_url or livekit_token");
+      }
+      if (livekitRoom) return;
+
+      videoMode = msg.video_mode || msg.lip_sync_mode || "agent";
+      if (msg.embed_url) showBeyEmbed(msg.embed_url);
+
+      livekitConnecting = true;
+      await disconnectLiveKit();
+      if (msg.embed_url) showBeyEmbed(msg.embed_url);
+
+      $("detail").textContent = "Connecting Beyond Presence avatar…";
+      const connectFn =
+        videoMode === "lip_sync"
+          ? window.NilaLiveKitGemini.connectAvatarRoom
+          : window.NilaLiveKitGemini.connectAvatarViewer;
+      const { room, LK } = await connectFn(url, token);
+      livekitRoom = room;
+      videoTrackSeen = false;
+
+      window.NilaLiveKitGemini.attachAgentTracks(
+        room,
+        LK,
+        $("avatarVideo"),
+        () => {
+          videoTrackSeen = true;
+          $("avatarEmbed").style.display = "none";
+          $("avatarPlaceholder").style.display = "none";
+          $("avatarVideo").style.display = "block";
+          log("LiveKit avatar video visible.");
+        },
+        { videoOnly: true }
+      );
+
+      room.on(LK.RoomEvent.ParticipantConnected, () => {
+        if (!videoTrackSeen && embedUrl) showBeyEmbed(embedUrl);
+      });
+
+      useLiveKitAudio = false;
+      if (videoMode === "lip_sync") {
+        geminiPublisher = await window.NilaLiveKitGemini.createGeminiPcmPublisher(room, 24000);
+        useLiveKitAudio = true;
+        log("Lip-sync mode — publishing Gemini audio to LiveKit.");
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "livekit_ready" }));
+        }
+      } else {
+        log("Agent video mode — Gemini voice plays locally; Bey shows in panel.");
+        setTimeout(() => {
+          if (!videoTrackSeen && embedUrl) showBeyEmbed(embedUrl);
+        }, 8000);
+      }
+
+      if (msg.speech_to_video_warning) log("Bey: " + msg.speech_to_video_warning);
+      $("orb").className = "orb live";
+      livekitConnecting = false;
+    }
+
+    async function ensureLiveKitFromMsg(msg) {
+      if (livekitRoom || livekitConnecting) return;
+      try {
+        await connectLiveKit(msg);
+        $("detail").textContent = videoTrackSeen
+          ? "Avatar face active — speak in any language."
+          : "LiveKit connected — waiting for avatar video track…";
+      } catch (e) {
+        livekitConnecting = false;
+        log("LiveKit/Bey: " + e.message);
+        $("detail").textContent = "Voice works; video failed: " + e.message;
+      }
+    }
+
+    async function retryLiveKitSession() {
+      log("Retrying Beyond Presence video…");
+      try {
+        const res = await fetch(`${api()}/api/avatar/live-gemini/livekit-session`, {
+          method: "POST",
+        });
+        const data = await res.json();
+        if (data.ok) await ensureLiveKitFromMsg(data);
+        else log("LiveKit retry failed: " + (data.error || "unknown"));
+      } catch (e) {
+        log("LiveKit retry: " + e.message);
+      }
+    }
+
+    async function startMic() {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+      });
+      audioCtx = new AudioContext();
+      await audioCtx.resume();
+      const captureRate = audioCtx.sampleRate;
+      log(`Mic capture ${captureRate} Hz → Gemini uplink ${MIC_TARGET_RATE} Hz`);
+      const source = audioCtx.createMediaStreamSource(micStream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      audioCtx._analyser = analyser;
+      processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processor.onaudioprocess = (e) => {
+        updateMeter();
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        let samples = e.inputBuffer.getChannelData(0);
+        if (captureRate !== MIC_TARGET_RATE) {
+          samples = resampleFloat32(samples, captureRate, MIC_TARGET_RATE);
+        }
+        const pcm = floatTo16BitPCM(samples);
+        ws.send(JSON.stringify({ type: "audio", data: arrayBufferToBase64(pcm.buffer) }));
+      };
+      analyser.connect(processor);
+      const silent = audioCtx.createGain();
+      silent.gain.value = 0;
+      processor.connect(silent);
+      silent.connect(audioCtx.destination);
+    }
+
+    function stopMic() {
+      processor?.disconnect();
+      audioCtx?.close();
+      micStream?.getTracks().forEach((t) => t.stop());
+      processor = audioCtx = micStream = null;
+    }
+
+    function handleGeminiAudio(msg) {
+      const bytes = Uint8Array.from(atob(msg.data), (c) => c.charCodeAt(0));
+      if (useLiveKitAudio && geminiPublisher) {
+        geminiPublisher.pushPcmBytes(bytes).catch((e) => {
+          log("Audio publish: " + e.message);
+        });
+      }
+      if (window.NilaGeminiPlayback && (!useLiveKitAudio || videoMode !== "lip_sync")) {
+        window.NilaGeminiPlayback.playPcm24k(bytes, () => {
+          $("orb").className = "orb live";
+        });
+      }
+    }
+
+    async function checkStatus() {
+      try {
+        const res = await fetch(`${api()}/api/avatar/live-gemini/status`);
+        const data = await res.json();
+        if (data.ready) {
+          const bey = data.bey_ok ? "Bey video OK." : "Voice only (no BEYOND_PRESENCE_API_KEY).";
+          $("detail").textContent = `${data.message} ${bey} Click Connect.`;
+        } else {
+          $("detail").textContent = data.message || "Not ready.";
+        }
+      } catch (e) {
+        $("detail").textContent = "Cannot reach API: " + e.message;
+      }
+    }
+
+    function connect() {
+      ws = new WebSocket(wsUrl());
+      $("status").textContent = "Connecting…";
+      ws.onopen = () => {
+        $("status").textContent = "Live";
+        $("btnConnect").style.display = "none";
+        $("btnDisconnect").style.display = "inline-block";
+        renderResources([]);
+        log("WebSocket connected — waiting for Gemini session…");
+        if (micSafetyTimer) clearInterval(micSafetyTimer);
+        micSafetyTimer = setInterval(() => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            window.NilaGeminiPlayback?.clearAgentSpeaking();
+            if (greeted && $("detail").dataset.listening !== "1") {
+              setMicLive(true);
+            }
+          }
+        }, 3000);
+      };
+      ws.onmessage = async (ev) => {
+        let msg;
+        try {
+          msg = JSON.parse(ev.data);
+        } catch (e) {
+          return;
+        }
+        try {
+        if (msg.type === "status") {
+          if (msg.message) $("detail").textContent = msg.message;
+        } else if (msg.type === "greeting") {
+          greeted = true;
+          const g = msg.text || "";
+          modelLineText = g;
+          $("modelLine").textContent = g || "—";
+          log("Nila: " + g);
+          $("detail").textContent = g || "Nila is greeting you…";
+        } else if (msg.type === "accepting_audio") {
+          if (msg.enabled) {
+            setMicLive(true);
+            log("Backend accepting microphone audio.");
+          }
+        } else if (msg.type === "ready") {
+          log("Gemini ready — KB: " + (msg.kb_search_language || "en"));
+          videoMode = msg.video_mode || videoMode;
+          if (!micStarted) {
+            micStarted = true;
+            startMic()
+              .then(() => {
+                setMicLive(true);
+                $("detail").textContent =
+                  "Mic on — speak anytime (English, Sinhala, or Tamil). Use headphones.";
+                log("Microphone streaming to Gemini.");
+              })
+              .catch((e) => log("Mic: " + e.message));
+          }
+        } else if (msg.type === "session_lost") {
+          log("Session lost: " + (msg.message || ""));
+          $("detail").textContent = msg.message || "Voice link lost — click Disconnect, then Connect.";
+          $("status").textContent = "Reconnect needed";
+        } else if (msg.type === "livekit") {
+          if (livekitRetryTimer) clearTimeout(livekitRetryTimer);
+          if (livekitRoom && msg.speech_to_video_ok) {
+            log("Avatar lip-sync session active.");
+            $("detail").textContent = "Avatar face active — speak in any language.";
+          } else {
+            await ensureLiveKitFromMsg(msg);
+          }
+        } else if (msg.type === "livekit_error") {
+          log("LiveKit error: " + (msg.message || ""));
+          if (embedUrl) showBeyEmbed(embedUrl);
+          else setTimeout(retryLiveKitSession, 3000);
+        } else if (msg.type === "listening") {
+          window.NilaGeminiPlayback?.clearAgentSpeaking();
+          setMicLive(true);
+          userLineText = "";
+          $("userLine").textContent = "—";
+          if (greeted) {
+            $("detail").textContent =
+              "Listening — speak your next question (English, Sinhala, or Tamil).";
+          }
+        } else if (msg.type === "rag_applied") {
+          log(`RAG applied: ${msg.resource_count} resources`);
+          window.NilaGeminiPlayback?.clearAgentSpeaking();
+          setMicLive(true);
+        } else if (msg.type === "resources") {
+          renderResources(msg.resources || []);
+        } else if (msg.type === "rag_search") {
+          log(`KB: ${msg.resource_count} resource(s) — ${msg.query}`);
+        } else if (msg.type === "audio") {
+          handleGeminiAudio(msg);
+        } else if (msg.type === "text") {
+          const t = msg.text || "";
+          if (msg.role === "user") {
+            userLineText += t;
+            $("userLine").textContent = userLineText.trim() || "—";
+          } else {
+            if (msg.final) modelLineText = t;
+            else modelLineText += t;
+            $("modelLine").textContent = modelLineText.trim() || "—";
+          }
+          log((msg.role === "user" ? "You" : "Nila") + ": " + t);
+        } else if (msg.type === "error") {
+          $("status").textContent = "Error";
+          $("detail").textContent = msg.message;
+        }
+        } catch (e) {
+          log("Message error: " + (e.message || e));
+        }
+      };
+      ws.onclose = () => disconnect(false);
+    }
+
+    async function disconnect(user) {
+      greeted = false;
+      micStarted = false;
+      userLineText = "";
+      modelLineText = "";
+      $("userLine").textContent = "—";
+      $("modelLine").textContent = "—";
+      if (micSafetyTimer) {
+        clearInterval(micSafetyTimer);
+        micSafetyTimer = null;
+      }
+      if (livekitRetryTimer) clearTimeout(livekitRetryTimer);
+      window.NilaGeminiPlayback?.resetPlayback();
+      stopMic();
+      ws?.close();
+      ws = null;
+      await disconnectLiveKit();
+      livekitConnecting = false;
+      videoTrackSeen = false;
+      $("status").textContent = "Offline";
+      $("detail").textContent = user ? "Disconnected." : "Closed.";
+      $("orb").className = "orb";
+      $("btnConnect").style.display = "inline-block";
+      $("btnDisconnect").style.display = "none";
+      renderResources([]);
+    }
+
+    $("btnConnect").addEventListener("click", connect);
+    $("btnDisconnect").addEventListener("click", () => disconnect(true));
+    $("apiBase").value = `${location.protocol}//${location.host}`;
+    checkStatus();
+  </script>
+</body>
+</html>

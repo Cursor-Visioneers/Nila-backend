@@ -1,9 +1,13 @@
 """Gemini Live API configuration for real-time speech-to-speech."""
 
 import os
+from pathlib import Path
 
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Native audio model for Live API (Google AI Studio)
 LIVE_MODEL = os.getenv(
@@ -59,11 +63,59 @@ LIVE_CONFIG = {
 }
 
 
+def _load_env() -> None:
+    """Re-read .env so key updates apply without guessing whether uvicorn reloaded."""
+    load_dotenv(_PROJECT_ROOT / ".env", override=True)
+
+
 def get_genai_client() -> genai.Client:
-    api_key = os.getenv("GEMINI_API_KEY")
+    _load_env()
+    api_key = (os.getenv("GEMINI_API_KEY") or "").strip().strip('"').strip("'")
     if not api_key:
         raise ValueError("GEMINI_API_KEY is not set")
     return genai.Client(
         api_key=api_key,
         http_options={"api_version": "v1alpha"},
     )
+
+
+def friendly_gemini_error(exc: Exception) -> str:
+    msg = str(exc).strip()
+    lower = msg.lower()
+    if "expired" in lower:
+        return (
+            "Your Gemini API key has expired. Open Google AI Studio → API keys, "
+            "create a new key, set GEMINI_API_KEY in backend .env, then stop and "
+            "restart uvicorn (Ctrl+C, then start again)."
+        )
+    if "leaked" in lower:
+        return (
+            "This Gemini API key was reported as leaked by Google and is disabled. "
+            "Create a brand-new key in Google AI Studio (do not reuse the old one), "
+            "update GEMINI_API_KEY in backend .env, then fully restart uvicorn "
+            "(Ctrl+C and start again — --reload does not reload .env)."
+        )
+    if "api key" in lower or "api_key" in lower or "permission" in lower:
+        return (
+            f"Gemini rejected the API key: {msg[:200]}. "
+            "Check GEMINI_API_KEY in backend .env (no quotes/spaces), then fully "
+            "restart the server (stop uvicorn and start again)."
+        )
+    return msg or "Gemini Live connection failed"
+
+
+async def verify_gemini_live_connect(
+    *,
+    model: str | None = None,
+    config: dict | None = None,
+) -> tuple[bool, str]:
+    """Open a short Live session to validate the key (not just that it is set)."""
+    model = model or LIVE_MODEL
+    config = config or {"response_modalities": ["AUDIO"]}
+    try:
+        client = get_genai_client()
+        async with client.aio.live.connect(model=model, config=config):
+            pass
+        return True, ""
+    except Exception as exc:
+        return False, friendly_gemini_error(exc)

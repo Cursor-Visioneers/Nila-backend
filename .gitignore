@@ -1,0 +1,115 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checkers & linters
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# IDE & editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs & local runtime
+*.log
+logs/
+/tmp/
+/tmp/*
+*.pid
+nohup.out
+.uvicorn.pid
+
+# Secrets & credentials (never commit)
+*.pem
+*.key
+credentials.json
+service-account*.json
+
+# Node (frontend)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+.next/
+out/
+frontend/**/dist/
+frontend/**/.vite/
+frontend/**/build/
+
+# Local tools / tunnels (dev)
+.cloudflared/
+ngrok
+ngrok.exe
+
+# Cursor / local IDE
+.cursor/
+*.code-workspace
+
+# Python local / caches
+.python-version
+*.sqlite3
+*.db
+.cache/
