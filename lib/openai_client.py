@@ -6,6 +6,7 @@ from functools import lru_cache
 from openai import AsyncOpenAI
 
 MODEL_NAME = "gpt-4o"
+TRANSLATE_MODEL = os.getenv("OPENAI_TRANSLATE_MODEL", "gpt-4o-mini")
 
 
 @lru_cache(maxsize=1)
@@ -47,6 +48,30 @@ def _to_openai_history(history: list) -> list[dict]:
             continue
         messages.append({"role": role, "content": content})
     return messages
+
+
+async def translate_to_english(text: str) -> str:
+    """Translate a short utterance to English for knowledge-base search."""
+    text = (text or "").strip()
+    if not text:
+        return text
+    response = await _client().chat.completions.create(
+        model=TRANSLATE_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Translate the user's message into concise English keywords suitable "
+                    "for searching a Sri Lanka government services database. "
+                    "Return only the English search phrase, no quotes or explanation."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        temperature=0,
+    )
+    translated = (response.choices[0].message.content or text).strip()
+    return translated or text
 
 
 async def generate_response(

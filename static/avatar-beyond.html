@@ -6,6 +6,7 @@
   <title>Nila — Beyond Presence Avatar Test</title>
   <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.9.1/dist/livekit-client.umd.min.js"></script>
   <script src="/static/js/livekit-bey.js"></script>
+  <script src="/static/js/avatar-live-ui.js"></script>
   <style>
     :root {
       --bg: #0a0e14;
@@ -141,6 +142,23 @@
       max-height: 120px;
       overflow: auto;
     }
+
+    #transcriptLog {
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 0.82rem;
+      background: #0a0e14;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.5rem;
+      margin-top: 0.65rem;
+    }
+    .empty-transcript { color: var(--muted); margin: 0; }
+    .transcript-line { margin: 0.35rem 0; padding: 0.35rem 0.5rem; border-radius: 6px; }
+    .transcript-line.line-user { background: #1e293b; }
+    .transcript-line.line-agent { background: #2e1065; }
+    .transcript-line.interim { opacity: 0.75; font-style: italic; }
+    .mic-hint { font-size: 0.78rem; color: var(--warn); margin-top: 0.35rem; }
     details { font-size: 0.8rem; color: var(--muted); margin-top: 0.75rem; }
   </style>
 </head>
@@ -208,9 +226,13 @@
         <div id="videoWrap">
           <div id="placeholder" class="placeholder">Run “Start avatar” to load the Beyond Presence stream.</div>
           <video id="avatarVideo" autoplay playsinline></video>
+          <audio id="agentAudio" autoplay playsinline style="display:none"></audio>
           <iframe id="streamFrame" title="Beyond Presence" allow="camera; microphone; autoplay; fullscreen"></iframe>
         </div>
         <p id="streamStatus" class="status muted" style="margin-top:0.6rem">No stream yet.</p>
+        <div id="transcriptLog"></div>
+        <p id="micHint" class="mic-hint" style="display:none">Listening… speak after the greeting. If Nila stays silent, check mic permission.</p>
+
         <p id="streamLinkWrap" style="display:none;margin-top:0.5rem;font-size:0.85rem">
           Stream URL: <a id="streamLink" href="#" target="_blank" rel="noopener"></a>
         </p>
@@ -239,6 +261,9 @@
     let liveWs = null;
     let lastStreamUrl = null;
     let sessionId = localStorage.getItem("nila_avatar_session") || null;
+    let wsPingTimer = null;
+
+    NilaAvatarLiveUI?.initTranscript("transcriptLog");
 
     function apiBase() {
       const v = $("apiBase").value.trim();
@@ -395,7 +420,7 @@
       setAction("Requesting microphone access…", "muted");
       const { room, LK } = await window.NilaLiveKitBey.connectWithMicrophone(url, token);
       livekitRoom = room;
-      window.NilaLiveKitBey.attachAgentTracks(room, LK, $("avatarVideo"));
+      window.NilaLiveKitBey.attachAgentTracks(room, LK, $("avatarVideo"), $("agentAudio"));
       $("avatarVideo").style.display = "block";
       $("placeholder").style.display = "none";
       $("btnDisconnect").disabled = false;
@@ -597,10 +622,25 @@
         const ragNote = msg.voice_uses_supabase_rag
           ? "Voice answers use Supabase RAG."
           : "Resources from Supabase when you ask; avatar voice uses Bey (local).";
+        if (msg.session_id) {
+          sessionId = msg.session_id;
+          localStorage.setItem("nila_avatar_session", sessionId);
+        }
         connectLiveKit(msg.livekit_url, msg.livekit_token)
           .then(() => {
             setStream(`Live — ${ragNote}`, "ok");
             $("btnDisconnectLive").style.display = "inline-block";
+            $("micHint").style.display = "block";
+            NilaAvatarLiveUI?.clearTranscript();
+            NilaAvatarLiveUI?.startSpeechRecognition((t) => {
+              if (liveWs?.readyState === WebSocket.OPEN) {
+                liveWs.send(JSON.stringify({ type: "user_transcript", text: t }));
+              }
+            });
+            if (wsPingTimer) clearInterval(wsPingTimer);
+            wsPingTimer = setInterval(() => {
+              if (liveWs?.readyState === WebSocket.OPEN) liveWs.send(JSON.stringify({ type: "ping" }));
+            }, 25000);
           })
           .catch((e) => {
             const text = window.NilaLiveKitBey?.micErrorMessage?.(e) || e.message;
@@ -625,8 +665,11 @@
         return;
       }
       if (msg.type === "text") {
+        const role = msg.role === "user" ? "user" : "model";
+        NilaAvatarLiveUI?.appendLine(role === "user" ? "user" : "agent", msg.text, false);
         if (msg.role === "user") {
           $("replyBox").textContent = `You: ${msg.text}`;
+          $("replyBox").style.display = "block";
         } else {
           $("replyBox").textContent = msg.text;
           $("replyBox").style.display = "block";
@@ -680,6 +723,9 @@
     }
 
     async function disconnectLive() {
+      if (wsPingTimer) clearInterval(wsPingTimer);
+      NilaAvatarLiveUI?.stopSpeechRecognition();
+      $("micHint").style.display = "none";
       if (liveWs) {
         liveWs.close();
         liveWs = null;

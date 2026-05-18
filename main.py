@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from routers import (
     avatar,
     avatar_live,
+    avatar_live_gemini,
     chat,
     live,
     live_elevenlabs,
@@ -22,7 +23,7 @@ from routers import (
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-load_dotenv()
+load_dotenv(override=True)
 
 app = FastAPI(title="Nila Backend", version="1.0")
 
@@ -37,6 +38,11 @@ app.add_middleware(
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(avatar.router, prefix="/api/avatar", tags=["avatar"])
 app.include_router(avatar_live.router, prefix="/api/avatar/live", tags=["avatar-live"])
+app.include_router(
+    avatar_live_gemini.router,
+    prefix="/api/avatar/live-gemini",
+    tags=["avatar-live-gemini"],
+)
 app.include_router(
     avatar_live.openai_router,
     prefix="/api/avatar/openai/v1",
@@ -99,6 +105,15 @@ def voice_ui():
     if page.is_file():
         return FileResponse(page)
     return {"error": "static/voice-agent.html not found"}
+
+
+@app.get("/avatar-live-gemini")
+def avatar_live_gemini_ui():
+    """Gemini Live multilingual avatar (no Beyond Presence)."""
+    page = STATIC_DIR / "avatar-live-gemini.html"
+    if page.is_file():
+        return FileResponse(page)
+    return {"error": "static/avatar-live-gemini.html not found"}
 
 
 @app.get("/live")

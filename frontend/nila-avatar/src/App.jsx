@@ -24,6 +24,7 @@ export default function App() {
   const [micOn, setMicOn] = useState(false);
   const [loading, setLoading] = useState(false);
   const videoRef = useRef(null);
+  const audioRef = useRef(null);
   const roomRef = useRef(null);
 
   const api = useCallback(
@@ -119,13 +120,17 @@ export default function App() {
         },
       });
       roomRef.current = room;
-      room.on(RoomEvent.TrackSubscribed, (track) => {
-        if (
-          videoRef.current &&
-          (track.kind === "video" || track.kind === "audio")
-        ) {
+      room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
+        if (participant?.isLocal) return;
+        if (track.kind === "video" && videoRef.current) {
           track.attach(videoRef.current);
           videoRef.current.muted = false;
+          videoRef.current.play?.().catch(() => {});
+        }
+        if (track.kind === "audio" && audioRef.current) {
+          track.attach(audioRef.current);
+          audioRef.current.muted = false;
+          room.startAudio?.().catch(() => {});
         }
       });
       await room.connect(data.livekit_url, data.livekit_token);
@@ -344,7 +349,10 @@ export default function App() {
                   allow="camera; microphone; fullscreen"
                 />
               ) : (
-                <video ref={videoRef} autoPlay playsInline />
+                <>
+                  <video ref={videoRef} autoPlay playsInline />
+                  <audio ref={audioRef} autoPlay playsInline style={{ display: "none" }} />
+                </>
               )}
             </div>
             <p className="muted" style={{ marginTop: "0.5rem" }}>

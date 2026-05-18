@@ -72,6 +72,7 @@ async def search_knowledge(
                 "source_url": row.get("source_url"),
                 "dept": row.get("dept"),
                 "metadata": row.get("metadata") or {},
+                "similarity": row.get("similarity"),
             }
             for row in rows
         ]

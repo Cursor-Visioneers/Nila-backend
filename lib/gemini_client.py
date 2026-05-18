@@ -1,10 +1,10 @@
-"""Google Gemini API client."""
+"""Google Gemini API client (text / Sinhala chat via google.genai)."""
 
-import asyncio
 import os
-from functools import lru_cache
 
-import google.generativeai as genai
+from google.genai import types
+
+from lib.gemini_live import get_genai_client
 
 SYSTEM_INSTRUCTION = (
     "You are Nila, the GIC AI assistant for Sri Lanka. Answer only using the provided "
@@ -12,19 +12,11 @@ SYSTEM_INSTRUCTION = (
     "it with RESOURCE: so it can be extracted. If you cannot answer, say so in Sinhala "
     "and suggest calling 1919."
 )
-MODEL_NAME = "gemini-3.1-flash-lite"
+MODEL_NAME = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
 
 
-@lru_cache(maxsize=1)
-def _configure() -> None:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY is not set")
-    genai.configure(api_key=api_key)
-
-
-def _to_gemini_history(history: list) -> list[dict]:
-    gemini_history: list[dict] = []
+def _to_contents(history: list, user_message: str, context: str) -> list[types.Content]:
+    contents: list[types.Content] = []
     for msg in history or []:
         if not isinstance(msg, dict):
             continue
@@ -36,8 +28,14 @@ def _to_gemini_history(history: list) -> list[dict]:
             role = "model"
         if role not in ("user", "model"):
             continue
-        gemini_history.append({"role": role, "parts": [content]})
-    return gemini_history
+        contents.append(
+            types.Content(role=role, parts=[types.Part.from_text(text=content)])
+        )
+    prompt = f"CONTEXT:\n{context}\n\nQUESTION: {user_message}"
+    contents.append(
+        types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+    )
+    return contents
 
 
 async def generate_sinhala_response(
@@ -45,16 +43,13 @@ async def generate_sinhala_response(
     context: str,
     history: list,
 ) -> str:
-    _configure()
-    model = genai.GenerativeModel(
-        model_name=MODEL_NAME,
-        system_instruction=SYSTEM_INSTRUCTION,
+    client = get_genai_client()
+    response = await client.aio.models.generate_content(
+        model=MODEL_NAME,
+        contents=_to_contents(history, user_message, context),
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_INSTRUCTION,
+            temperature=0.3,
+        ),
     )
-    chat = model.start_chat(history=_to_gemini_history(history))
-    prompt = f"CONTEXT:\n{context}\n\nQUESTION: {user_message}"
-
-    def _generate() -> str:
-        response = chat.send_message(prompt)
-        return response.text or ""
-
-    return await asyncio.to_thread(_generate)
+    return (response.text or "").strip()

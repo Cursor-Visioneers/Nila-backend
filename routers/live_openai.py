@@ -43,7 +43,9 @@ async def _run_rag_tool(
         result, found = await search_government_knowledge_with_resources(
             query, language="en"
         )
-        await send_resources(websocket, resource_panel, found, replace=True)
+        await send_resources(
+            websocket, resource_panel, found, replace=True, query=query
+        )
         return result
     except Exception as exc:
         return f"Search failed: {exc}"

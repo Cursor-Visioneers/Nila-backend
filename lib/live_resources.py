@@ -1,6 +1,13 @@
 """Shared helpers for live WebSocket sessions (resources panel)."""
 
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
 from fastapi import WebSocket
+
+from lib.rag_tools import select_top_resources
 
 
 def dedupe_resources(resources: list[dict]) -> list[dict]:
@@ -21,10 +28,17 @@ async def send_resources(
     new_items: list[dict],
     *,
     replace: bool = False,
+    query: str = "",
+    push: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     if replace:
         panel[:] = list(new_items)
     else:
         panel.extend(new_items)
         panel[:] = dedupe_resources(panel)
-    await websocket.send_json({"type": "resources", "resources": list(panel)})
+    panel[:] = select_top_resources(panel, query)
+    payload = {"type": "resources", "resources": list(panel)}
+    if push is not None:
+        push(payload)
+    else:
+        await websocket.send_json(payload)

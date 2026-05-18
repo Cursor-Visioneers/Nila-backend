@@ -1,4 +1,4 @@
-"""Poll Beyond Presence call transcripts and trigger Supabase RAG."""
+"""Poll Beyond Presence call transcripts and push them to the live UI."""
 
 from __future__ import annotations
 
@@ -27,19 +27,20 @@ async def list_call_messages(client: httpx.AsyncClient, call_id: str) -> list[di
     return data.get("data") or []
 
 
-async def poll_call_for_user_speech(
+async def poll_call_transcripts(
     call_id: str,
-    on_user_message,
+    on_message,
     *,
-    interval_sec: float = 1.5,
+    interval_sec: float = 1.2,
     stop: asyncio.Event,
 ) -> None:
     """
     Poll Bey call messages until stop is set.
-    on_user_message(text) is awaited for each new user utterance.
+
+    on_message(sender, text) is awaited for each new utterance.
+    sender is typically "user" or "agent".
     """
-    seen: set[tuple[str, str]] = set()
-    last_rag_key = ""
+    seen: set[tuple[str, str, str]] = set()
 
     async with httpx.AsyncClient() as client:
         while not stop.is_set():
@@ -53,30 +54,47 @@ async def poll_call_for_user_speech(
             for item in messages:
                 if not isinstance(item, dict):
                     continue
-                if item.get("sender") != "user":
+                sender = (item.get("sender") or item.get("role") or "").strip().lower()
+                if sender not in ("user", "agent", "assistant"):
                     continue
-                text = (item.get("message") or "").strip()
+                if sender == "assistant":
+                    sender = "agent"
+                text = (item.get("message") or item.get("text") or "").strip()
                 if not text:
                     continue
-                sent_at = item.get("sent_at") or ""
-                key = (sent_at, text)
+                sent_at = str(item.get("sent_at") or item.get("created_at") or "")
+                key = (sent_at, sender, text)
                 if key in seen:
                     continue
                 seen.add(key)
 
-                if not should_auto_search_user_text(text):
-                    continue
-                rag_key = text.lower()
-                if rag_key == last_rag_key:
-                    continue
-                last_rag_key = rag_key
-
                 try:
-                    await on_user_message(text)
+                    await on_message(sender, text)
                 except Exception as exc:
-                    logger.warning("RAG handler failed: %s", exc)
+                    logger.warning("call transcript handler failed: %s", exc)
 
             try:
                 await asyncio.wait_for(stop.wait(), timeout=interval_sec)
             except TimeoutError:
                 pass
+
+
+async def poll_call_for_user_speech(
+    call_id: str,
+    on_user_message,
+    *,
+    interval_sec: float = 1.5,
+    stop: asyncio.Event,
+) -> None:
+    """Backward-compatible wrapper: only user messages that pass gov-topic filter."""
+
+    async def _on_message(sender: str, text: str) -> None:
+        if sender != "user":
+            return
+        if not should_auto_search_user_text(text):
+            return
+        await on_user_message(text)
+
+    await poll_call_transcripts(
+        call_id, _on_message, interval_sec=interval_sec, stop=stop
+    )

@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.requests import ClientDisconnect
+from starlette.responses import Response
 from pydantic import BaseModel, Field
 
 from lib import avatar_live_sessions as sessions
-from lib.bey_call_poller import poll_call_for_user_speech
 from lib.bey_presence import (
     create_call,
     ensure_setup,
@@ -22,7 +25,11 @@ from lib.bey_presence import (
 )
 from lib.chat_service import run_chat
 from lib.live_resources import send_resources
-from lib.openai_chat_stream import stream_text_as_openai_sse
+from lib.openai_chat_stream import (
+    shorten_for_speech,
+    stream_role_assistant_sse,
+    stream_text_as_openai_sse,
+)
 from lib.rag_tools import should_auto_search_user_text
 
 import httpx
@@ -30,6 +37,17 @@ import httpx
 router = APIRouter()
 openai_router = APIRouter()
 _llm_completion_count = 0
+logger = logging.getLogger(__name__)
+
+
+async def _read_json_body(request: Request) -> dict | None:
+    """Parse JSON body; return None when Bey aborts the request mid-read."""
+    try:
+        body = await request.json()
+    except ClientDisconnect:
+        logger.debug("Bey LLM request disconnected before body was read")
+        return None
+    return body if isinstance(body, dict) else {}
 
 
 class LiveSessionRequest(BaseModel):
@@ -76,15 +94,24 @@ async def avatar_live_status():
     except Exception as exc:
         supabase_message = str(exc)
 
+    from lib.bey_presence import external_llm_url_matches, public_llm_is_reachable
+
     public_url = public_llm_base()
+    public_reachable = await public_llm_is_reachable() if public_url else False
+    bey_llm_url_ok = await external_llm_url_matches() if public_url else False
     bey_ok = _has_bey_key()
-    rag_voice_ready = bool(public_url)
+    rag_voice_ready = bool(public_url and public_reachable and bey_llm_url_ok)
     local_mode = not rag_voice_ready
     # Local: LiveKit avatar works without ngrok. Voice RAG needs public URL for Bey to call us.
     ready = bool(bey_ok)
 
     if ready and rag_voice_ready and supabase_ok:
         message = "Ready — live avatar with Supabase answers in speech."
+    elif ready and public_url and public_reachable and not bey_llm_url_ok:
+        message = (
+            "Tunnel URL changed — run POST /api/avatar/setup so Beyond Presence can "
+            "reach your RAG voice API (fixes text-only replies)."
+        )
     elif ready and local_mode and supabase_ok:
         message = (
             "Local mode — avatar speaks with Bey’s LLM; Supabase forms/offices update "
@@ -104,6 +131,8 @@ async def avatar_live_status():
         "vector_docs": vector_docs,
         "supabase_message": supabase_message if not supabase_ok else "",
         "public_base_url": public_url or None,
+        "public_url_reachable": public_reachable,
+        "bey_external_llm_url_ok": bey_llm_url_ok,
         "rag_llm_ready": rag_voice_ready,
         "local_mode": local_mode,
         "openai_llm_url": openai_llm_url() or None,
@@ -200,28 +229,42 @@ async def avatar_live_websocket(websocket: WebSocket):
         pass
 
     try:
-        local = not public_llm_base()
-
         await websocket.send_json(
             {"type": "status", "message": "Configuring Beyond Presence agent…"}
         )
         setup = await ensure_setup()
+        local = not setup.get("rag_enabled")
 
         async with httpx.AsyncClient() as client:
             call = await create_call(client, setup["agent_id"])
 
         call_id = call.get("id") or ""
 
-        if local and call_id and supabase_ok:
+        if call_id:
 
-            async def on_user_speech(text: str) -> None:
-                await _run_rag_for_session(
-                    session_id, text, resource_panel, websocket
-                )
+            async def on_call_transcript(sender: str, text: str) -> None:
+                role = "user" if sender == "user" else "model"
+                try:
+                    await websocket.send_json(
+                        {"type": "text", "role": role, "text": text}
+                    )
+                except Exception:
+                    return
+                if (
+                    sender == "user"
+                    and supabase_ok
+                    and local
+                    and should_auto_search_user_text(text)
+                ):
+                    await _run_rag_for_session(
+                        session_id, text, resource_panel, websocket
+                    )
+
+            from lib.bey_call_poller import poll_call_transcripts
 
             poller_task = asyncio.create_task(
-                poll_call_for_user_speech(
-                    call_id, on_user_speech, stop=poller_stop
+                poll_call_transcripts(
+                    call_id, on_call_transcript, stop=poller_stop
                 )
             )
 
@@ -243,16 +286,21 @@ async def avatar_live_websocket(websocket: WebSocket):
                 "openai_llm_url": setup.get("openai_llm_url"),
             }
         )
-        if local and supabase_ok:
+        if setup.get("rag_enabled") and supabase_ok:
+            ready_msg = (
+                "Connected — speak after the greeting. Your words appear in the "
+                "conversation panel; voice answers use Supabase RAG."
+            )
+        elif local and supabase_ok:
             ready_msg = (
                 "Connected (local). Speak a government question — resources load from "
-                "Supabase automatically. Avatar voice uses Bey until NILA_PUBLIC_BASE_URL is set."
+                "Supabase automatically. Avatar voice uses Bey’s LLM."
             )
         elif local:
             ready_msg = "Connected (local). Add Supabase keys for knowledge-base resources."
         else:
             ready_msg = setup.get("rag_message") or (
-                "Connected — voice and resources use Supabase RAG."
+                "Connected — speak to the avatar after the greeting."
             )
         await websocket.send_json({"type": "status", "message": ready_msg})
 
@@ -305,7 +353,7 @@ async def _run_rag_for_session(
     chat = await run_chat(query, language="en", voice_mode=True)
     answer = (chat.get("reply") or "").strip()
     found = chat.get("resources") or []
-    await send_resources(websocket, panel, found, replace=True)
+    await send_resources(websocket, panel, found, replace=True, query=query)
     await websocket.send_json(
         {
             "type": "rag_search",
@@ -353,7 +401,9 @@ async def openai_chat_completions(
     global _llm_completion_count
     _verify_llm_auth(authorization)
     _llm_completion_count += 1
-    body = await request.json()
+    body = await _read_json_body(request)
+    if body is None:
+        return Response(status_code=204)
     messages = body.get("messages") or []
     user_text = _extract_user_message(messages)
     if not user_text:
@@ -362,6 +412,13 @@ async def openai_chat_completions(
     model = body.get("model") or "nila-rag"
     stream = bool(body.get("stream", True))
     session_id = x_nila_session_id
+    logger.info(
+        "Bey LLM request #%s stream=%s session=%s q=%s",
+        _llm_completion_count,
+        stream,
+        session_id or "-",
+        user_text[:80],
+    )
 
     await sessions.push(
         session_id,
@@ -377,50 +434,97 @@ async def openai_chat_completions(
             },
         )
 
-    chat = await run_chat(user_text, language="en", voice_mode=True)
-    answer = (chat.get("reply") or "").strip()
-    if not answer:
-        answer = (
-            "I could not find that in the government knowledge base. "
-            "Try rephrasing or call 1919 for help."
-        )
-
-    resources = chat.get("resources") or []
-    await sessions.push(
-        session_id,
-        {"type": "resources", "resources": resources},
-    )
-    await sessions.push(
-        session_id,
-        {
-            "type": "rag_search",
-            "query": user_text,
-            "resource_count": len(resources),
-            "supabase": True,
-            "engine": chat.get("engine"),
-        },
-    )
-    await sessions.push(
-        session_id,
-        {"type": "text", "role": "model", "text": answer},
-    )
-
     if not stream:
-        return {
-            "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-            "object": "chat.completion",
-            "choices": [
+
+        async def _complete_json() -> dict:
+            chat = await run_chat(user_text, language="en", voice_mode=True)
+            answer = shorten_for_speech((chat.get("reply") or "").strip())
+            if not answer:
+                answer = (
+                    "I could not find that in the government knowledge base. "
+                    "Try rephrasing or call 1919 for help."
+                )
+            resources = chat.get("resources") or []
+            await sessions.push(
+                session_id, {"type": "resources", "resources": resources}
+            )
+            await sessions.push(
+                session_id,
                 {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": answer},
-                    "finish_reason": "stop",
-                }
-            ],
-            "model": model,
-        }
+                    "type": "rag_search",
+                    "query": user_text,
+                    "resource_count": len(resources),
+                    "supabase": True,
+                    "engine": chat.get("engine"),
+                },
+            )
+            await sessions.push(
+                session_id, {"type": "text", "role": "model", "text": answer}
+            )
+            return {
+                "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": answer},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "model": model,
+            }
+
+        return await _complete_json()
+
+    async def _stream() -> AsyncIterator[str]:
+        chunk_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
+        try:
+            async for line in stream_role_assistant_sse(model=model):
+                yield line
+
+            chat = await run_chat(user_text, language="en", voice_mode=True)
+            answer = shorten_for_speech((chat.get("reply") or "").strip())
+            if not answer:
+                answer = (
+                    "I could not find that in the government knowledge base. "
+                    "Try rephrasing or call 1919 for help."
+                )
+            resources = chat.get("resources") or []
+            await sessions.push(
+                session_id, {"type": "resources", "resources": resources}
+            )
+            await sessions.push(
+                session_id,
+                {
+                    "type": "rag_search",
+                    "query": user_text,
+                    "resource_count": len(resources),
+                    "supabase": True,
+                    "engine": chat.get("engine"),
+                },
+            )
+            await sessions.push(
+                session_id, {"type": "text", "role": "model", "text": answer}
+            )
+            async for line in stream_text_as_openai_sse(
+                answer, model=model, include_role=False, chunk_id=chunk_id
+            ):
+                yield line
+            logger.info("Bey LLM stream ok len=%s", len(answer))
+        except Exception:
+            logger.exception("Bey LLM stream failed")
+            err = "Sorry, I could not load that answer right now. Please try again."
+            async for line in stream_text_as_openai_sse(
+                err, model=model, include_role=False, chunk_id=chunk_id
+            ):
+                yield line
 
     return StreamingResponse(
-        stream_text_as_openai_sse(answer, model=model),
+        _stream(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
